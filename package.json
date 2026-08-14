@@ -1,0 +1,22 @@
+{
+  "name": "image-exporter",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Pure client-side web tool for exporting pretty pictures from cloud-native Earth observation data.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host"
+  },
+  "devDependencies": {
+    "vite": "^5.4.21"
+  },
+  "dependencies": {
+    "@turf/turf": "^7.4.0",
+    "flatpickr": "^4.6.13",
+    "geotiff": "^3.0.5",
+    "maplibre-gl": "^6.3.0",
+    "proj4": "^2.21.0"
+  }
+}

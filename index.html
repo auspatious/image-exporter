@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Image Exporter — pretty pictures from Earth observation data</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar" aria-label="Controls">
+        <header>
+          <h1>Image Exporter</h1>
+          <p class="tagline">
+            Search Sentinel-2, pick a day, draw a box, tune the look, download.
+          </p>
+        </header>
+        <section id="panel-search" class="panel"></section>
+        <section id="panel-area" class="panel"></section>
+        <section id="panel-items" class="panel"></section>
+        <section id="panel-bands" class="panel"></section>
+        <section id="panel-viz" class="panel"></section>
+        <section id="panel-export" class="panel"></section>
+        <section id="panel-status" class="panel" aria-live="polite"></section>
+      </aside>
+      <main id="map-container">
+        <div id="map"></div>
+        <div id="map-spinner" aria-hidden="true"></div>
+      </main>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
