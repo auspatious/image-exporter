@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "license": "Apache-2.0",
   "description": "Pure client-side web tool for exporting pretty pictures from cloud-native Earth observation data.",
   "scripts": {
     "dev": "vite",

@@ -1,116 +1,105 @@
 # Image Exporter
 
-This is a pure client-side web tool, which uses cloud native geospatial
-technologies to create a very pretty picture from Earth observation data.
+**Live at [cogniscient.auspatious.com](https://cogniscient.auspatious.com/)**
 
-## Requirements
+A pure client-side web app for making pretty pictures from Earth observation
+data. Search Sentinel-2 imagery, draw a box on the map, pick an acquisition
+day, tune the look, and download a PNG or JPG — all in the browser, no
+backend, no sign-up.
 
-- [ ] Uses Maplibre as a base
-- [ ] Uses the map extent, when zoomed in close, to highlight data footprints from a STAC API query
-- [ ] Start with Earth Search at the URL `https://earth-search.aws.element84.com/v1/` and the Sentinel-2 collection `sentinel-2-c1-l2a` — **shipped with `sentinel-2-l2a` as the default instead; see the CORS note below.**
-- [ ] UI should have a date range picker, plus other filters if useful
-- [ ] Base the functionality on this notebook: https://github.com/GeoscienceAustralia/dea-notebooks/blob/rbt/Interactive_apps/Exporting_satellite_images.ipynb and code: https://github.com/GeoscienceAustralia/dea-notebooks/blob/rbt/Tools/dea_tools/app/imageexport.py
-- [ ] Everything should be javascript, or web assembly
-- [ ] Build a super simple local dev/test environment
-- [ ] Deep dive in the tech, write very little new code, just integrate existing work.
-- [ ] When several STAC items from the same acquisition day cover the drawn area, load their COGs and **merge (mosaic) them into a single image** before export.
-- [ ] Export is always driven by a **user-drawn rectangle** on the map (not the map viewport).
-- [ ] **Warn the user before large downloads** — estimate the pixel count / MB that will be fetched from the drawn area at the chosen resolution, and require confirmation past a sensible threshold.
-- [ ] Use the **COG overview levels** (built-in pyramids) to fetch data at a reasonable resolution: pick the overview whose native pixel size is closest to (but not finer than) the target output pixel size, so we don't waste bandwidth pulling full-resolution tiles for a small preview.
+## Using it
 
-## Getting started
-
-Prerequisites: Node 20+ (`.nvmrc` provided).
-
-```bash
-npm ci        # install dependencies
-npm run dev   # start Vite dev server on http://127.0.0.1:5173
-npm run build # produce a static bundle in dist/
-npm run preview
-```
-
-The app is pure client-side: `dist/` can be hosted on any static file host,
-including S3, Cloudflare Pages, GitHub Pages or a plain nginx.
+1. **Zoom in** to your area of interest — scene footprints appear as you pan
+   and zoom. Adjust the date range and max cloud cover in the Search panel.
+2. **Draw a rectangle** over the area you want to export. A size slider sets
+   the output resolution, up to the data's native 10 m/px, with an estimate
+   of how much data will be fetched.
+3. **Pick a day** from the list. Each day shows mean cloud cover, how much of
+   your box it covers, and whether it's a mosaic of several scenes. Same-day
+   scenes are merged seamlessly into one image.
+4. **Choose bands** (optional). Any Sentinel-2 band can go into the R, G, and
+   B channels — try NIR/Red/Green for false-colour vegetation.
+5. **Tune the look.** vmin/vmax/gamma sliders re-tone the cached pixels
+   instantly — nothing is re-downloaded.
+6. **Download.** Saves exactly what you see, cropped to the valid data area,
+   as PNG or JPG.
 
 ## How it works
 
-The app is glue code around a handful of well-known JavaScript libraries.
-Everything runs in the browser; there is no backend.
+Everything runs in the browser. The app is glue code around a handful of
+excellent open-source libraries:
 
-| Piece | Library | What we use it for |
+| Piece | Library | Used for |
 |---|---|---|
-| Map | [maplibre-gl](https://maplibre.org/) | Basemap, navigation, footprint layer, drawn-box display, final overlay of the exported image. |
-| STAC search | plain `fetch` to [Earth Search v1](https://earth-search.aws.element84.com/v1/) | Returns Sentinel-2 items with `red`/`green`/`blue` COG hrefs. |
-| Read COGs | [geotiff.js](https://geotiffjs.github.io/) | Windowed `readRasters` reads only the bytes we need for the drawn box, at a resolution matching the target output size — geotiff.js automatically picks the smallest COG overview large enough. |
-| Reprojection | [proj4](http://proj4js.org/) | Convert the WGS84 drawn bbox to each item's native UTM zone before reading. |
-| Geometry helpers | [`@turf/turf`](https://turfjs.org/) | Area, intersection, bbox polygon, WGS84 distances for GSD/pixel-size maths. |
+| Map | [maplibre-gl](https://maplibre.org/) | Basemap, footprints, box drawing, preview overlay |
+| STAC search | plain `fetch` to [Earth Search v1](https://earth-search.aws.element84.com/v1/) | Finding Sentinel-2 scenes and their COG URLs |
+| COG reads | [geotiff.js](https://geotiffjs.github.io/) | Windowed range-reads of just the bytes covering the drawn box |
+| Reprojection | [proj4](http://proj4js.org/) | WGS84 box → each scene's native UTM zone |
+| Geometry | [@turf/turf](https://turfjs.org/) | Areas, intersections, coverage percentages |
+| Date picker | [flatpickr](https://flatpickr.js.org/) | Date-range selection |
 
-Pipeline for the export step:
+The export pipeline: scenes intersecting the box are grouped by solar day;
+the drawn box is reprojected to each scene's UTM zone; geotiff.js reads only
+the intersecting pixel window of each RGB COG (using internal overviews, so
+previews are fast); windows are placed at their true geographic offsets and
+merged into one mosaic (brighter pixel wins in overlaps, which heals
+resampling artefacts at scene seams); a vmin/vmax/gamma stretch renders the
+result to canvas. The preview overlay and the downloaded file are the same
+pixels — downloading never re-fetches.
 
-1. **Group by day.** All items intersecting the drawn box are grouped by
-   solar day. Selecting a day tells the app "mosaic every item from this
-   acquisition into one image".
-2. **Reproject bbox per item.** Sentinel-2 tiles straddle UTM zones, so the
-   drawn bbox is reprojected to *each* contributing item's native CRS.
-3. **Windowed COG read.** For each item and each of the three RGB assets,
-   `image.readRasters({ bbox, width, height, resampleMethod: 'bilinear' })`
-   fetches only the byte ranges needed. geotiff.js picks the smallest
-   overview that satisfies the requested pixel size — no bandwidth wasted
-   on a preview.
-4. **Mosaic.** Per-item arrays are merged pixel-wise, first-valid wins
-   (Sentinel-2 nodata = 0), yielding a single seamless RGB canvas.
-5. **Stretch, gamma, unsharp.** vmin/vmax stretch → power (gamma) → optional
-   two-pass box-blur unsharp mask.
-6. **Preview + download.** The result is drawn to an `OffscreenCanvas`,
-   overlaid on the map as a MapLibre image source, and downloaded as PNG
-   or JPG.
+## Local development
 
-### Download-size safety net
+Requires Node 20+ (`.nvmrc` provided).
 
-Before the export runs, the app estimates the number of bytes it will fetch
-using `width × height × 3 bands × 2 bytes/sample × item count × 1.3` and
-categorises the result:
+```bash
+npm ci        # install dependencies
+npm run dev   # dev server at http://127.0.0.1:5173
+npm run build # static bundle in dist/
+npm run preview
+```
 
-| Tier | Range | Behaviour |
-|---|---|---|
-| small | < 25 MB | Runs immediately. |
-| medium | 25–150 MB | Runs after a confirmation dialog. |
-| large | > 150 MB | Runs after a confirmation dialog with a warning. |
-| too large | > 8000 × 8000 px | Warns that the browser canvas may reject the image. |
+Notes:
 
-The drawn area itself is capped at 10 000 km² to match the DEA reference
-app's hard limit.
+- The MapTiler basemap key is origin-restricted, so local dev automatically
+  falls back to OpenStreetMap tiles. To get the clean basemap locally, add
+  your own origins to a MapTiler key in `src/map.js`.
+- `dist/` is fully static and can be hosted anywhere. This deployment uses
+  Cloudflare Workers static assets: `npx wrangler deploy` (see
+  `wrangler.jsonc`).
 
-### A note on preview vs. export
+### Code layout
 
-We initially planned to overlay the source COGs directly with
-[`@geomatico/maplibre-cog-protocol`](https://github.com/geomatico/maplibre-cog-protocol),
-but that library requires COGs to be in EPSG:3857 while Sentinel-2 assets are
-in per-tile UTM zones. Rather than reprojecting server-side (which would
-break the "pure client-side" requirement), the app composites the RGB
-in-browser and shows the result as an `image` source overlay on the map.
-The composited image *is* the export — the preview and download go through
-the same pipeline (only the target size differs).
+```
+src/
+  main.js            controller: search, draw, day selection, preview, download
+  export.js          COG windowed reads, mosaic compositing, stretch/render
+  stac.js            Earth Search POST /search client
+  mosaic.js          group scenes by day, cloud/coverage stats
+  overviews.js       box size / output pixel geometry helpers
+  size-estimate.js   fetch-size estimate and warning tiers
+  map.js             MapLibre setup and basemap
+  footprint-layer.js scene footprint + selection layers
+  rectangle-draw.js  click-drag box drawing
+  state.js           tiny reactive store
+  ui/                one small render function per sidebar panel
+```
 
-### A note on collection choice (CORS)
+Contributions welcome — keep it simple, keep it client-side.
 
-The requirements pointed at `sentinel-2-c1-l2a` on Earth Search v1. That
-collection's data lives in
-`e84-earth-search-sentinel-data.s3.us-west-2.amazonaws.com`, which currently
-returns no `Access-Control-Allow-Origin` header — so browser range requests
-to the COG bytes are blocked by CORS. The app ships with `sentinel-2-l2a`
-selected by default, which serves the **same** Sentinel-2 L2A imagery from
-`sentinel-cogs.s3.us-west-2.amazonaws.com` — the older bucket that has
-`Access-Control-Allow-Origin: *` set. The dropdown still exposes
-`sentinel-2-c1-l2a` for the day Element84 enables CORS on the new bucket.
+## Credits
 
-### Auto-stretch
+- Imagery search and cloud-optimised GeoTIFFs served by
+  [Earth Search](https://earth-search.aws.element84.com/v1/), a free STAC API
+  operated by [Element 84](https://element84.com/) — thank you!
+- Contains modified [Copernicus](https://www.copernicus.eu/) Sentinel-2 data,
+  hosted in the [AWS Open Data](https://registry.opendata.aws/sentinel-2-l2a-cogs/)
+  program.
+- Inspired by the
+  [DEA image export notebook](https://github.com/GeoscienceAustralia/dea-notebooks/blob/rbt/Interactive_apps/Exporting_satellite_images.ipynb)
+  from Geoscience Australia.
+- Basemaps by [MapTiler](https://www.maptiler.com/) and
+  [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.
 
-Different scenes have wildly different reflectance distributions
-(exposure, snow, water, clouds…), so hard-coded vmin/vmax rarely look
-good everywhere. When a fresh set of COGs is fetched, the app computes
-the 2nd and 98th percentile of the R/G/B pixels and drops those into the
-vmin/vmax sliders. From there, the user can drag the sliders to
-fine-tune — and every subsequent drag re-tones the cached pixels
-instantly (no re-download).
+## License
 
+[Apache 2.0](LICENSE)
