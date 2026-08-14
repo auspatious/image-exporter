@@ -4,16 +4,29 @@ import * as turf from '@turf/turf';
 
 const pool = new Pool();
 
-// Handle cache. Same COG re-opened many times → we open it once.
+// Handle cache. Same COG re-opened many times → we open it once. Capped and
+// LRU-evicted so a long session panning across many regions doesn't hold
+// open handles for every COG it has ever touched.
+const MAX_CACHED_ASSETS = 64;
 const imageCache = new Map();
 async function openAsset(href) {
-  if (!imageCache.has(href)) imageCache.set(href, fromUrl(href, { cacheSize: 32 }));
-  return imageCache.get(href);
+  if (imageCache.has(href)) {
+    const entry = imageCache.get(href);
+    imageCache.delete(href); // re-insert to mark as most recently used
+    imageCache.set(href, entry);
+    return entry;
+  }
+  const entry = fromUrl(href, { cacheSize: 32 });
+  imageCache.set(href, entry);
+  if (imageCache.size > MAX_CACHED_ASSETS) {
+    imageCache.delete(imageCache.keys().next().value);
+  }
+  return entry;
 }
 
 /* ── Coordinate transforms ────────────────────────────────────────────── */
 
-function utmProj(epsg) {
+export function utmProj(epsg) {
   const code = String(epsg);
   if (!code.startsWith('326') && !code.startsWith('327')) {
     throw new Error(`Unsupported CRS EPSG:${epsg} (only WGS84 UTM north/south)`);
@@ -23,7 +36,7 @@ function utmProj(epsg) {
   return `+proj=utm +zone=${zone}${south ? ' +south' : ''} +datum=WGS84 +units=m +no_defs`;
 }
 
-function reprojectBbox(bbox4326, epsg) {
+export function reprojectBbox(bbox4326, epsg) {
   proj4.defs(`EPSG:${epsg}`, utmProj(epsg));
   const p = proj4('EPSG:4326', `EPSG:${epsg}`);
   const [w, s, e, n] = bbox4326;
@@ -45,7 +58,7 @@ function reprojectBbox(bbox4326, epsg) {
  *
  * Returns `null` when the item doesn't intersect the drawn box.
  */
-async function readWindow(href, bbox4326, outWidth, outHeight, itemEpsg) {
+async function readWindow(href, bbox4326, outWidth, outHeight, itemEpsg, signal) {
   const tiff = await openAsset(href);
   const image = await tiff.getImage(0);
   const epsg = image.geoKeys?.ProjectedCSTypeGeoKey ?? itemEpsg;
@@ -92,6 +105,7 @@ async function readWindow(href, bbox4326, outWidth, outHeight, itemEpsg) {
     resampleMethod: 'bilinear',
     pool,
     fillValue: 0,
+    signal,
   });
   return {
     pixels: data[0],
@@ -109,7 +123,7 @@ async function readWindow(href, bbox4326, outWidth, outHeight, itemEpsg) {
  * R+G+B all arrive and are merged into the mosaic. Returns the same arrays
  * that were streamed — callers can use them for both preview and download.
  */
-export async function streamComposite({ items, drawnBbox, bands = { r: 'red', g: 'green', b: 'blue' }, width, height, onPartial, onLog }) {
+export async function streamComposite({ items, drawnBbox, bands = { r: 'red', g: 'green', b: 'blue' }, width, height, onPartial, onLog, signal }) {
   const r = new Float32Array(width * height);
   const g = new Float32Array(width * height);
   const b = new Float32Array(width * height);
@@ -124,9 +138,9 @@ export async function streamComposite({ items, drawnBbox, bands = { r: 'red', g:
       const epsg = item.properties?.['proj:epsg'] ?? item.properties?.['proj:code'];
       try {
         const [R, G, B] = await Promise.all([
-          readWindow(item.assets[bands.r].href, drawnBbox, width, height, epsg),
-          readWindow(item.assets[bands.g].href, drawnBbox, width, height, epsg),
-          readWindow(item.assets[bands.b].href, drawnBbox, width, height, epsg),
+          readWindow(item.assets[bands.r].href, drawnBbox, width, height, epsg, signal),
+          readWindow(item.assets[bands.g].href, drawnBbox, width, height, epsg, signal),
+          readWindow(item.assets[bands.b].href, drawnBbox, width, height, epsg, signal),
         ]);
         if (!R || !G || !B) {
           onPartial?.(arrays, idx + 1, contributing.length);
@@ -157,7 +171,9 @@ export async function streamComposite({ items, drawnBbox, bands = { r: 'red', g:
         }
         onPartial?.(arrays, idx + 1, contributing.length);
       } catch (err) {
-        onLog?.(`Skipped ${item.id}: ${err.message}`);
+        // AbortError means the caller cancelled this fetch (e.g. the user
+        // picked a different day/box) — expected, not a real failure.
+        if (err.name !== 'AbortError') onLog?.(`Skipped ${item.id}: ${err.message}`);
       }
     }),
   );

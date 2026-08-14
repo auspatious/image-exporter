@@ -25,7 +25,7 @@ export function renderExportPanel(el, { onDownload }) {
         </select>
         <button id="dl-btn" ${canDl ? '' : 'disabled'} title="${reason || 'Save the current preview'}">Download</button>
       </div>
-      <p class="hint">${reason || 'Saves the current preview — same pixels, no re-download.'}</p>
+      <p class="hint">${reason || 'Save the current preview.'}</p>
     `;
     el.querySelector('#fmt').addEventListener('change', (e) => setViz({ format: e.target.value }));
     el.querySelector('#dl-btn').addEventListener('click', onDownload);

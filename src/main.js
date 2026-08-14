@@ -27,12 +27,20 @@ if (import.meta.env.DEV) {
 }
 
 renderStatusPanel(document.getElementById('panel-status'));
+
+// Surface otherwise-silent bugs in the Status panel instead of just the
+// console, since that's the one place users can see when something broke.
+window.addEventListener('error', (e) => log.err(`Unexpected error: ${e.message}`));
+window.addEventListener('unhandledrejection', (e) => {
+  log.err(`Unexpected error: ${e.reason?.message ?? e.reason}`);
+});
+
 renderSearchPanel(document.getElementById('panel-search'), { onChange: runSearch, map });
 renderAreaPanel(document.getElementById('panel-area'), {
   onDraw: () => { log.info('Click-drag on the map to draw.'); draw.start(); },
   onClear: () => { draw.clear(); log.info('Cleared box.'); },
 });
-renderItemsPanel(document.getElementById('panel-items'), { onSelect: selectDay });
+renderItemsPanel(document.getElementById('panel-items'), { onSelect: selectDay, map });
 renderBandsPanel(document.getElementById('panel-bands'));
 renderVizPanel(document.getElementById('panel-viz'));
 renderExportPanel(document.getElementById('panel-export'), { onDownload: download });
@@ -141,6 +149,7 @@ function selectDay(day) {
 
 let cache = null;         // { key, arrays }
 let inFlightKey = null;   // string
+let fetchAbort = null;    // AbortController for the in-flight COG reads
 let overlayId = null;
 let overlayURL = null;
 
@@ -158,6 +167,8 @@ function sceneKey() {
 function invalidatePreview() {
   cache = null;
   inFlightKey = null;
+  fetchAbort?.abort();
+  fetchAbort = null;
   if (overlayId) {
     if (map.getLayer(overlayId)) map.removeLayer(overlayId);
     if (map.getSource(overlayId)) map.removeSource(overlayId);
@@ -181,6 +192,8 @@ async function startFetch() {
   log.info(`Fetching ${group.items.length} item(s) → ${size.width}×${size.height} px`);
 
   inFlightKey = key;
+  fetchAbort?.abort();
+  fetchAbort = new AbortController();
   set({ loading: { active: true, done: 0, total: group.items.length, message: 'Preparing' } });
   showSpinner(true);
 
@@ -191,6 +204,7 @@ async function startFetch() {
       bands: state.bands,
       width: size.width,
       height: size.height,
+      signal: fetchAbort.signal,
       onLog: log.info,
       onPartial: (arrays, itemIdx, itemCount) => {
         if (sceneKey() !== key) return;
@@ -269,21 +283,25 @@ subscribe((s) => {
 
 async function download() {
   if (!cache) return log.warn('No preview to save.');
-  const img = cropToValid(renderRGBA(cache.arrays, state.viz), cache.arrays.mask);
-  const fmt = state.viz.format;
-  const blob = await toBlob(img, fmt);
-  const [w, s, e, n] = state.drawnBbox;
-  const place = await placeName((w + e) / 2, (s + n) / 2);
-  const suffix = place ? `-${place}` : '';
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `cogniscient-${state.selectedDay}-${img.width}px${suffix}.${fmt === 'jpg' ? 'jpg' : 'png'}`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  log.ok(`Saved ${img.width}×${img.height} px ${fmt.toUpperCase()}`);
+  try {
+    const img = cropToValid(renderRGBA(cache.arrays, state.viz), cache.arrays.mask);
+    const fmt = state.viz.format;
+    const blob = await toBlob(img, fmt);
+    const [w, s, e, n] = state.drawnBbox;
+    const place = await placeName((w + e) / 2, (s + n) / 2);
+    const suffix = place ? `-${place}` : '';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cogniscient-${state.selectedDay}-${img.width}px${suffix}.${fmt === 'jpg' ? 'jpg' : 'png'}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    log.ok(`Saved ${img.width}×${img.height} px ${fmt.toUpperCase()}`);
+  } catch (err) {
+    log.err(`Save failed: ${err.message}`);
+  }
 }
 
 /* ── Spinner over drawn box ───────────────────────────────────────────── */

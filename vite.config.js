@@ -19,4 +19,9 @@ export default defineConfig({
     // directly and preserves the worker URL.
     exclude: ['maplibre-gl'],
   },
+  test: {
+    environment: 'node',
+    setupFiles: ['./test/setup.js'],
+    include: ['test/**/*.test.js'],
+  },
 });

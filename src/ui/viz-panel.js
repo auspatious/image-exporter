@@ -15,7 +15,11 @@ export function renderVizPanel(el) {
     const input = el.querySelector(`[data-input="${key}"]`);
     const label = el.querySelector(`[data-val="${key}"]`);
     input.addEventListener('input', (e) => {
-      const v = Number(e.target.value);
+      let v = Number(e.target.value);
+      // Keep vmin < vmax — an inverted range silently breaks the stretch.
+      if (key === 'vmin') v = Math.min(v, state.viz.vmax - 1);
+      if (key === 'vmax') v = Math.max(v, state.viz.vmin + 1);
+      if (v !== Number(e.target.value)) input.value = String(v);
       setViz({ [key]: v });
       label.textContent = format(key, v);
     });
