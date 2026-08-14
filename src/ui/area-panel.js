@@ -69,7 +69,7 @@ function paint(el, onDraw, onClear) {
       <label>Output size <span id="tw-val">${sizeLabel(sizeNow)}</span></label>
       <input id="tw" type="range" min="${MIN_WIDTH}" max="${sliderMax}" step="${STEP}" value="${currentWidth}" />
     </div>
-    <div id="tw-badge"><span class="badge ${tierClass(estNow.tier)}">${estNow.megabytes.toFixed(1)} MB · ${tierLabel(estNow.tier)}</span></div>
+    <div id="tw-badge"><span class="badge ${tierClass(estNow.tier)}">fetches ~${estNow.megabytes.toFixed(0)} MB · ${tierLabel(estNow.tier)}</span></div>
     ${overLimit ? `<p class="hint" style="color:var(--danger)">Exceeds ${HARD_LIMIT_KM2.toLocaleString()} km² hard limit — redraw smaller.</p>` : ''}
   `;
 
@@ -86,7 +86,7 @@ function paint(el, onDraw, onClear) {
     const s = outputSize(bbox, w, state.nativeGSD);
     const est = estimateBytes({ width: s.width, height: s.height, itemCount });
     twVal.textContent = sizeLabel(s);
-    twBadge.innerHTML = `<span class="badge ${tierClass(est.tier)}">${est.megabytes.toFixed(1)} MB · ${tierLabel(est.tier)}</span>`;
+    twBadge.innerHTML = `<span class="badge ${tierClass(est.tier)}">fetches ~${est.megabytes.toFixed(0)} MB · ${tierLabel(est.tier)}</span>`;
   });
 
   // Commit on release → triggers refetch.
