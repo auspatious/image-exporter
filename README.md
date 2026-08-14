@@ -1,4 +1,4 @@
-# Image Exporter
+# Cogniscient
 
 **Live at [cogniscient.auspatious.com](https://cogniscient.auspatious.com/)**
 

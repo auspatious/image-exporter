@@ -19,7 +19,7 @@ export function renderItemsPanel(el, { onSelect }) {
           const cloud = g.meanCloud == null ? '—' : `${g.meanCloud.toFixed(0)}% cloud`;
           const cover = g.coverage == null ? '' : ` · ${g.coverage.toFixed(0)}% coverage`;
           const mosaicNote = g.items.length > 1 ? ` · mosaic of ${g.items.length}` : '';
-          return `<li class="${isSel}" data-day="${g.day}"><span>${g.day}<br><span class="hint">${cloud}${cover}${mosaicNote}</span></span><span class="badge">${g.items.length}</span></li>`;
+          return `<li class="${isSel}" data-day="${g.day}"><span>${g.day}<br><span class="hint">${cloud}${cover}${mosaicNote}</span></span></li>`;
         })
         .join('')}</ul>`;
     }

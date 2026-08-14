@@ -142,7 +142,6 @@ let cache = null;         // { key, arrays }
 let inFlightKey = null;   // string
 let overlayId = null;
 let overlayURL = null;
-let sidebarURL = null;
 
 function sceneKey() {
   if (!state.drawnBbox || !state.selectedDay) return null;
@@ -164,9 +163,6 @@ function invalidatePreview() {
     overlayId = null;
   }
   if (overlayURL) { URL.revokeObjectURL(overlayURL); overlayURL = null; }
-  if (sidebarURL) { URL.revokeObjectURL(sidebarURL); sidebarURL = null; }
-  const holder = document.getElementById('preview-holder');
-  if (holder) holder.innerHTML = '';
 }
 
 async function startFetch() {
@@ -226,7 +222,6 @@ function schedulePaint() {
     if (!cache) return;
     const img = renderRGBA(cache.arrays, state.viz);
     await paintOverlay(img, state.drawnBbox);
-    paintSidebar(img);
   });
 }
 
@@ -244,21 +239,6 @@ async function paintOverlay(img, bbox) {
   }
   const prev = overlayURL;
   overlayURL = url;
-  if (prev) setTimeout(() => URL.revokeObjectURL(prev), 100);
-}
-
-async function paintSidebar(img) {
-  const holder = document.getElementById('preview-holder');
-  if (!holder) return;
-  let elImg = holder.querySelector('#preview');
-  if (!elImg) {
-    holder.innerHTML = `<div class="hint">Preview:</div><img id="preview" alt="preview" />`;
-    elImg = holder.querySelector('#preview');
-  }
-  const url = await toBlobURL(img, 'png');
-  const prev = sidebarURL;
-  elImg.src = url;
-  sidebarURL = url;
   if (prev) setTimeout(() => URL.revokeObjectURL(prev), 100);
 }
 
@@ -294,7 +274,7 @@ async function download() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `image-exporter-${state.selectedDay}-${img.width}px.${fmt === 'jpg' ? 'jpg' : 'png'}`;
+  a.download = `cogniscient-${state.selectedDay}-${img.width}px.${fmt === 'jpg' ? 'jpg' : 'png'}`;
   document.body.appendChild(a);
   a.click();
   a.remove();

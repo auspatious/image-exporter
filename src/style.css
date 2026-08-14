@@ -277,13 +277,6 @@ button:disabled {
   color: var(--danger);
 }
 
-#preview {
-  max-width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  display: block;
-}
-
 .progress {
   display: flex;
   flex-direction: column;
