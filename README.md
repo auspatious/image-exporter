@@ -56,6 +56,7 @@ npm ci        # install dependencies
 npm run dev   # dev server at http://127.0.0.1:5173
 npm run build # static bundle in dist/
 npm run preview
+npm test      # unit tests (vitest)
 ```
 
 Notes:

@@ -16,7 +16,12 @@ behaviour should update this file in the same commit. No drift!
    - mean cloud cover (%) across that day's scenes (whole-footprint value)
    - coverage (%): how much of the drawn box is covered by the union of
      that day's footprints
-   - "mosaic of N" when more than one scene contributes
+   - a dropdown toggle showing the scene count; expanding it lists each
+     contributing STAC item (id + its own cloud cover %), preserving list
+     scroll position across the toggle. Hovering an item row highlights just
+     that item's footprint on the map (white outline, drawn above the
+     selected-day highlight); clicking opens the item's canonical STAC JSON
+     (its `self` link) in a new tab.
 4. **Preview**: a mosaicked RGB preview streams from the COGs and is shown
    as an image overlay on the map, georeferenced inside the drawn box.
 5. **Tune the look**: vmin / vmax / gamma sliders (defaults 0 / 3000 / 1.0,
@@ -78,6 +83,12 @@ behaviour should update this file in the same commit. No drift!
 
 - 100% client-side, no backend. Vite build, plain JS, small modules:
   store (state.js) + controller (main.js) + panels (src/ui/).
+- Unit tests (vitest, `npm test`) cover the pure logic modules: mosaic
+  grouping/coverage, output-size geometry, size estimates, geocode slugify,
+  and UTM reprojection. GitHub Actions runs tests + build on every push/PR.
+- Unexpected runtime errors (uncaught exceptions, unhandled promise
+  rejections) are surfaced in the Status panel via `log.err`, not just the
+  console.
 - Deployed as Cloudflare Workers static assets (worker name
   `image-exporter`, do not rename - the cogniscient.auspatious.com route
   depends on it). Deploy: `npm run build && npx wrangler deploy`.

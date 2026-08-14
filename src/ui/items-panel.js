@@ -1,7 +1,30 @@
 import { state, subscribe } from '../state.js';
+import { setHoverItem } from '../footprint-layer.js';
 
-export function renderItemsPanel(el, { onSelect }) {
-  subscribe(() => {
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Opens the item's canonical STAC JSON (its "self" link) in a new tab. Falls
+// back to a blob of the item as fetched, on the rare item with no self link.
+function openItemJSON(item) {
+  const selfHref = item.links?.find((l) => l.rel === 'self')?.href;
+  if (selfHref) {
+    window.open(selfHref, '_blank', 'noopener');
+    return;
+  }
+  const blob = new Blob([JSON.stringify(item, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank', 'noopener');
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+export function renderItemsPanel(el, { onSelect, map }) {
+  // Which days have their per-scene dropdown open. UI-only state — not
+  // part of the app store, so it survives repaints but not page reload.
+  const expandedDays = new Set();
+
+  function paint() {
     const bbox = state.drawnBbox;
     const groups = state.itemsByDay;
     const selected = state.selectedDay;
@@ -16,10 +39,28 @@ export function renderItemsPanel(el, { onSelect }) {
       body = `<ul id="items-list">${groups
         .map((g) => {
           const isSel = selected === g.day ? 'selected' : '';
+          const day = escapeHtml(g.day);
           const cloud = g.meanCloud == null ? '—' : `${g.meanCloud.toFixed(0)}% cloud`;
           const cover = g.coverage == null ? '' : ` · ${g.coverage.toFixed(0)}% coverage`;
-          const mosaicNote = g.items.length > 1 ? ` · mosaic of ${g.items.length}` : '';
-          return `<li class="${isSel}" data-day="${g.day}"><span>${g.day}<br><span class="hint">${cloud}${cover}${mosaicNote}</span></span></li>`;
+          const expanded = expandedDays.has(g.day);
+          const itemRows = g.items
+            .map((it, idx) => {
+              const itCloud = typeof it.properties?.['eo:cloud_cover'] === 'number'
+                ? `${it.properties['eo:cloud_cover'].toFixed(0)}%`
+                : '—';
+              return `<li class="stac-item-row" data-idx="${idx}" title="Hover to highlight, click to open the original STAC item">
+                <span>${escapeHtml(it.id)}</span>
+                <span class="hint">${itCloud} cloud</span>
+              </li>`;
+            })
+            .join('');
+          return `<li class="${isSel}" data-day="${day}">
+            <div class="day-row">
+              <span class="day-main" data-select>${day}<br><span class="hint">${cloud}${cover}</span></span>
+              <button type="button" class="expand-btn" data-toggle aria-expanded="${expanded}" title="${expanded ? 'Hide' : 'Show'} individual scenes">${g.items.length} ${expanded ? '▾' : '▸'}</button>
+            </div>
+            ${expanded ? `<ul class="stac-item-list">${itemRows}</ul>` : ''}
+          </li>`;
         })
         .join('')}</ul>`;
     }
@@ -41,10 +82,37 @@ export function renderItemsPanel(el, { onSelect }) {
         ? `${groups.length} day(s) in box`
         : `${groups.length} day(s) in view`;
 
+    // Re-rendering swaps in a fresh #items-list, which would otherwise reset
+    // scroll to the top every time a dropdown is toggled — preserve it.
+    const scrollTop = el.querySelector('#items-list')?.scrollTop ?? 0;
     el.innerHTML = `<h2>Days <span class="badge">${badge}</span></h2>${progressHtml}${body}`;
+    const newList = el.querySelector('#items-list');
+    if (newList) newList.scrollTop = scrollTop;
 
-    el.querySelectorAll('#items-list li').forEach((li) => {
-      li.addEventListener('click', () => onSelect?.(li.getAttribute('data-day')));
+    el.querySelectorAll('#items-list > li').forEach((li) => {
+      const day = li.getAttribute('data-day');
+      const group = groups.find((g) => g.day === day);
+      if (!group) return;
+
+      li.querySelector('.day-main')?.addEventListener('click', () => onSelect?.(day));
+
+      const toggleBtn = li.querySelector('.expand-btn');
+      toggleBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (expandedDays.has(day)) expandedDays.delete(day);
+        else expandedDays.add(day);
+        paint();
+      });
+
+      li.querySelectorAll('.stac-item-row').forEach((row) => {
+        const item = group.items[Number(row.getAttribute('data-idx'))];
+        if (!item) return;
+        row.addEventListener('mouseenter', () => setHoverItem(map, item));
+        row.addEventListener('mouseleave', () => setHoverItem(map, null));
+        row.addEventListener('click', () => openItemJSON(item));
+      });
     });
-  });
+  }
+
+  subscribe(paint);
 }
