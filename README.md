@@ -4,12 +4,12 @@
 
 A pure client-side web app for making pretty pictures from Earth observation
 data. Search Sentinel-2 imagery, draw a box on the map, pick an acquisition
-day, tune the look, and download a PNG or JPG — all in the browser, no
+day, tune the look, and download a PNG or JPG. All in the browser, no
 backend, no sign-up.
 
 ## Using it
 
-1. **Zoom in** to your area of interest — scene footprints appear as you pan
+1. **Zoom in** to your area of interest. Scene footprints appear as you pan
    and zoom. Adjust the date range and max cloud cover in the Search panel.
 2. **Draw a rectangle** over the area you want to export. A size slider sets
    the output resolution, up to the data's native 10 m/px, with an estimate
@@ -18,9 +18,9 @@ backend, no sign-up.
    your box it covers, and whether it's a mosaic of several scenes. Same-day
    scenes are merged seamlessly into one image.
 4. **Choose bands** (optional). Any Sentinel-2 band can go into the R, G, and
-   B channels — try NIR/Red/Green for false-colour vegetation.
+   B channels. Try NIR/Red/Green for false-colour vegetation.
 5. **Tune the look.** vmin/vmax/gamma sliders re-tone the cached pixels
-   instantly — nothing is re-downloaded.
+   instantly, nothing is re-downloaded.
 6. **Download.** Saves exactly what you see, cropped to the valid data area,
    as PNG or JPG.
 
@@ -45,7 +45,7 @@ previews are fast); windows are placed at their true geographic offsets and
 merged into one mosaic (brighter pixel wins in overlaps, which heals
 resampling artefacts at scene seams); a vmin/vmax/gamma stretch renders the
 result to canvas. The preview overlay and the downloaded file are the same
-pixels — downloading never re-fetches.
+pixels, so downloading never re-fetches.
 
 ## Local development
 
@@ -84,13 +84,13 @@ src/
   ui/                one small render function per sidebar panel
 ```
 
-Contributions welcome — keep it simple, keep it client-side.
+Contributions welcome. Keep it simple, keep it client-side.
 
 ## Credits
 
 - Imagery search and cloud-optimised GeoTIFFs served by
   [Earth Search](https://earth-search.aws.element84.com/v1/), a free STAC API
-  operated by [Element 84](https://element84.com/) — thank you!
+  operated by [Element 84](https://element84.com/). Thank you!
 - Contains modified [Copernicus](https://www.copernicus.eu/) Sentinel-2 data,
   hosted in the [AWS Open Data](https://registry.opendata.aws/sentinel-2-l2a-cogs/)
   program.
