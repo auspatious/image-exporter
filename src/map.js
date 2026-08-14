@@ -29,8 +29,8 @@ export function createMap(container) {
   const map = new Map({
     container,
     style: OSM_STYLE,
-    center: [135, -28],
-    zoom: 4,
+    center: [0, 20],
+    zoom: 1,
     hash: true,
   });
 
