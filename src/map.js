@@ -1,5 +1,11 @@
-import { Map, NavigationControl, ScaleControl, GeolocateControl } from 'maplibre-gl';
+import { Map, NavigationControl, ScaleControl, GeolocateControl, setWorkerUrl } from 'maplibre-gl';
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
+
+// maplibre v6 resolves its worker relative to import.meta.url, which breaks
+// once Vite bundles it. ?url makes Vite emit the worker file and hand us the
+// real production path.
+setWorkerUrl(maplibreWorkerUrl);
 
 const OSM_STYLE = {
   version: 8,
