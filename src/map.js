@@ -7,6 +7,11 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 // maplibre-gl-shared.mjs dependency) and hand us the real production path.
 setWorkerUrl(maplibreWorkerUrl);
 
+// Public client-side key, locked to allowed origins in the MapTiler dashboard.
+const MAPTILER_KEY = 'ZUYgDOuttJIaWHdE632Y';
+const MAPTILER_STYLE = `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${MAPTILER_KEY}`;
+
+// Fallback for origins the MapTiler key doesn't allow (e.g. local dev).
 const OSM_STYLE = {
   version: 8,
   sources: {
@@ -28,10 +33,17 @@ const OSM_STYLE = {
 export function createMap(container) {
   const map = new Map({
     container,
-    style: OSM_STYLE,
+    style: MAPTILER_STYLE,
     center: [0, 20],
     zoom: 1,
     hash: true,
+  });
+
+  // If the style fails to load (key restricted on this origin), fall back to OSM.
+  map.once('error', (e) => {
+    if (map.isStyleLoaded()) return;
+    console.warn('Basemap style failed, falling back to OSM:', e.error?.message);
+    map.setStyle(OSM_STYLE);
   });
 
   map.addControl(new NavigationControl({ visualizePitch: false }), 'top-right');
