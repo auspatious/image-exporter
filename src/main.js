@@ -5,7 +5,7 @@ import { searchItems } from './stac.js';
 import { addFootprintLayers, setFootprints, setSelected } from './footprint-layer.js';
 import { createRectangleDraw } from './rectangle-draw.js';
 import { groupByDay } from './mosaic.js';
-import { streamComposite, renderRGBA, toBlob, toBlobURL } from './export.js';
+import { streamComposite, renderRGBA, toBlob, toBlobURL, cropToValid } from './export.js';
 import { outputSize } from './overviews.js';
 import { renderSearchPanel } from './ui/search-panel.js';
 import { renderAreaPanel } from './ui/area-panel.js';
@@ -75,15 +75,26 @@ async function runSearch(debounce = false) {
       signal: searchAbort.signal,
     });
     const itemsByDay = groupByDay(items, state.drawnBbox);
-    set({ items, itemsByDay });
-    setFootprints(map, items);
-    // Keep the selected-day highlight in sync with fresh results.
-    const g = state.selectedDay ? itemsByDay.find((x) => x.day === state.selectedDay) : null;
-    setSelected(map, g?.items ?? []);
+    // If the selected day fell out of the new results (e.g. stricter cloud
+    // filter), drop the selection and its preview.
+    const dayGone = state.selectedDay && !itemsByDay.some((g) => g.day === state.selectedDay);
+    set({ items, itemsByDay, ...(dayGone ? { selectedDay: null } : {}) });
+    if (dayGone) invalidatePreview();
+    syncFootprints();
     log.ok(`Search: ${items.length} item(s), ${itemsByDay.length} day(s).`);
   } catch (err) {
     if (err.name !== 'AbortError') log.err(`Search: ${err.message}`);
   }
+}
+
+/**
+ * With a box drawn and a day picked, show only that day's footprints;
+ * otherwise show everything from the current search.
+ */
+function syncFootprints() {
+  const g = state.selectedDay ? state.itemsByDay.find((x) => x.day === state.selectedDay) : null;
+  setSelected(map, g?.items ?? []);
+  setFootprints(map, g && state.drawnBbox ? [] : state.items);
 }
 
 /* ── Rectangle draw ───────────────────────────────────────────────────── */
@@ -91,7 +102,7 @@ async function runSearch(debounce = false) {
 const draw = createRectangleDraw(map, ({ bbox }) => {
   if (!bbox) {
     set({ drawnBbox: null, drawnAreaKm2: 0, itemsByDay: groupByDay(state.items, null), selectedDay: null });
-    setSelected(map, []);
+    syncFootprints();
     invalidatePreview();
     return;
   }
@@ -104,7 +115,7 @@ const draw = createRectangleDraw(map, ({ bbox }) => {
     itemsByDay,
     selectedDay: stillValid ? state.selectedDay : null,
   });
-  if (!stillValid) setSelected(map, []);
+  syncFootprints();
   invalidatePreview();
   if (area > HARD_LIMIT_KM2) log.err(`Box ${area.toFixed(0)} km² — over ${HARD_LIMIT_KM2} km² limit.`);
   else log.info(`Box: ${area.toFixed(1)} km²`);
@@ -115,8 +126,7 @@ const draw = createRectangleDraw(map, ({ bbox }) => {
 
 function selectDay(day) {
   set({ selectedDay: day });
-  const g = state.itemsByDay.find((x) => x.day === day);
-  setSelected(map, g?.items ?? []);
+  syncFootprints();
   invalidatePreview();
   if (!state.drawnBbox) {
     log.info(`Selected ${day}. Draw a rectangle to load a preview.`);
@@ -136,8 +146,13 @@ let sidebarURL = null;
 
 function sceneKey() {
   if (!state.drawnBbox || !state.selectedDay) return null;
+  const g = state.itemsByDay.find((x) => x.day === state.selectedDay);
+  if (!g) return null;
   const b = state.bands;
-  return `${state.selectedDay}|${state.drawnBbox.join(',')}|${state.targetWidth}|${b.r},${b.g},${b.b}`;
+  // Item ids are part of the key so a cloud-filter change that adds or
+  // removes scenes on the selected day triggers a re-fetch.
+  const ids = g.items.map((i) => i.id).join(';');
+  return `${state.selectedDay}|${state.drawnBbox.join(',')}|${state.targetWidth}|${b.r},${b.g},${b.b}|${ids}`;
 }
 
 function invalidatePreview() {
@@ -273,7 +288,7 @@ subscribe((s) => {
 
 async function download() {
   if (!cache) return log.warn('No preview to save.');
-  const img = renderRGBA(cache.arrays, state.viz);
+  const img = cropToValid(renderRGBA(cache.arrays, state.viz), cache.arrays.mask);
   const fmt = state.viz.format;
   const blob = await toBlob(img, fmt);
   const url = URL.createObjectURL(blob);

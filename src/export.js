@@ -189,6 +189,38 @@ function stretch(v, vmin, rng, gamma) {
   return Math.round(x * 255);
 }
 
+/* ── Crop to valid data ───────────────────────────────────────────────── */
+
+/**
+ * Crop an ImageData to the bounding box of valid (masked-in) pixels, so
+ * downloads don't carry empty borders where no scene covered the box.
+ * Returns the original image if everything (or nothing) is valid.
+ */
+export function cropToValid(img, mask) {
+  const { width, height } = img;
+  let x0 = width, y0 = height, x1 = -1, y1 = -1;
+  for (let y = 0; y < height; y++) {
+    const base = y * width;
+    for (let x = 0; x < width; x++) {
+      if (!mask[base + x]) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < 0) return img; // no valid data — keep as-is
+  const w = x1 - x0 + 1;
+  const h = y1 - y0 + 1;
+  if (w === width && h === height) return img;
+  const out = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    const src = ((y0 + y) * width + x0) * 4;
+    out.set(img.data.subarray(src, src + w * 4), y * w * 4);
+  }
+  return new ImageData(out, w, h);
+}
+
 /* ── Encode ───────────────────────────────────────────────────────────── */
 
 export async function toBlob(img, format = 'png', quality = 0.92) {

@@ -11,7 +11,7 @@ export const state = {
   // Search filters — default to the last 30 days.
   dateFrom: isoDate(new Date(Date.now() - 30 * 86400_000)),
   dateTo: isoDate(new Date()),
-  cloudCoverMax: 20,
+  cloudCoverMax: 50,
   collection: 'sentinel-2-l2a',
   minSearchZoom: 8,
   nativeGSD: 10, // Sentinel-2 red/green/blue
