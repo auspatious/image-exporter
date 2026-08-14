@@ -13,7 +13,7 @@ export function addFootprintLayers(map) {
     type: 'fill',
     source: 'stac-items',
     paint: {
-      'fill-color': '#4ea8ff',
+      'fill-color': '#3474c7',
       'fill-opacity': 0.10,
     },
   });
@@ -22,7 +22,7 @@ export function addFootprintLayers(map) {
     type: 'line',
     source: 'stac-items',
     paint: {
-      'line-color': '#4ea8ff',
+      'line-color': '#3474c7',
       'line-width': 1,
       'line-opacity': 0.6,
     },
@@ -33,7 +33,7 @@ export function addFootprintLayers(map) {
     type: 'fill',
     source: 'stac-selected',
     paint: {
-      'fill-color': '#7bc47f',
+      'fill-color': '#fbc27b',
       'fill-opacity': 0.15,
     },
   });
@@ -42,7 +42,7 @@ export function addFootprintLayers(map) {
     type: 'line',
     source: 'stac-selected',
     paint: {
-      'line-color': '#7bc47f',
+      'line-color': '#fbc27b',
       'line-width': 3,
     },
   });

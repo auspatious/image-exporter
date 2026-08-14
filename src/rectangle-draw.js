@@ -22,14 +22,14 @@ export function createRectangleDraw(map, onBbox) {
       id: 'draw-box-fill',
       type: 'fill',
       source: 'draw-box',
-      paint: { 'fill-color': '#ffd23f', 'fill-opacity': 0.2 },
+      paint: { 'fill-color': '#f2f2f2', 'fill-opacity': 0.15 },
     });
     map.addLayer({
       id: 'draw-box-outline',
       type: 'line',
       source: 'draw-box',
       paint: {
-        'line-color': '#ffd23f',
+        'line-color': '#f2f2f2',
         'line-width': 3,
         'line-dasharray': [2, 1],
       },

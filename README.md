@@ -88,6 +88,7 @@ Contributions welcome. Keep it simple, keep it client-side.
 
 ## Credits
 
+- Built by [Auspatious](https://auspatious.com/).
 - Imagery search and cloud-optimised GeoTIFFs served by
   [Earth Search](https://earth-search.aws.element84.com/v1/), a free STAC API
   operated by [Element 84](https://element84.com/). Thank you!
