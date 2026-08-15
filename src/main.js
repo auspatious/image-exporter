@@ -158,6 +158,15 @@ function activeBands() {
   return state.bands;
 }
 
+// Filename-friendly description of what's actually in the image, e.g.
+// "rgb-red-green-blue", "single-nir", "index-nir-red".
+function bandsSlug() {
+  const b = activeBands();
+  if (state.vizMode === 'single') return `single-${b.band}`;
+  if (state.vizMode === 'index') return `index-${b.a}-${b.b}`;
+  return `rgb-${b.r}-${b.g}-${b.b}`;
+}
+
 function sceneKey() {
   if (!state.drawnBbox || !state.selectedDay) return null;
   const g = state.itemsByDay.find((x) => x.day === state.selectedDay);
@@ -312,7 +321,7 @@ async function download() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cogniscient-${state.selectedDay}-${outWidth}px${suffix}.${ext}`;
+    a.download = `cogniscient-${state.selectedDay}-${bandsSlug()}-${outWidth}px${suffix}.${ext}`;
     document.body.appendChild(a);
     a.click();
     a.remove();

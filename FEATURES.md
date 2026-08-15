@@ -66,7 +66,9 @@ behaviour should update this file in the same commit. No drift!
      cached pixel data; no refetch.
 6. **Download**: export the preview as PNG, JPG, or TIF from cached data (no
    refetch), named
-   `cogniscient-<day>-<width>px-<place>.<ext>` where `<place>` is a
+   `cogniscient-<day>-<bands>-<width>px-<place>.<ext>` where `<bands>`
+   describes what's actually in the image — `rgb-<r>-<g>-<b>`,
+   `single-<band>`, or `index-<a>-<b>` — and `<place>` is a
    reverse-geocoded name (OSM Nominatim, city/region level) for the
    centre of the drawn box. Geocoding failures are silent: the name is
    simply omitted.
