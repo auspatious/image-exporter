@@ -130,6 +130,31 @@ body,
   padding: 0;
 }
 
+.field input[type="range"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.field-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.field .checkbox-label input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+}
+
 .row {
   display: flex;
   gap: 8px;
@@ -202,6 +227,7 @@ button:disabled {
 }
 
 .day-row {
+  position: relative; /* anchors .day-progress to this row specifically */
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -325,31 +351,35 @@ button:disabled {
   color: var(--danger);
 }
 
-.progress {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
-  background: rgba(25, 75, 253, 0.12);
-  border: 1px solid rgba(25, 75, 253, 0.45);
-  border-radius: 4px;
-  font-size: 12px;
+/* Fetch progress, overlaid on the bottom edge of the loading day's own row
+   (see .day-progress in items-panel.js) — absolutely positioned so it never
+   adds height to the row or bumps anything else in the Days list, unlike a
+   separate block that used to sit above the whole list. */
+.day-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
-.progress .bar {
+.day-progress .bar {
+  height: 3px;
+  border-radius: 0;
+}
+.bar {
   position: relative;
-  height: 6px;
+  height: 4px;
   background: var(--panel);
-  border-radius: 3px;
+  border-radius: 2px;
   overflow: hidden;
 }
-.progress .bar span {
+.bar span {
   position: absolute;
   inset: 0;
   background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
   transform-origin: left center;
   transition: transform 200ms ease-out;
 }
-.progress .bar.indeterminate span {
+.bar.indeterminate span {
   animation: indeterminate 1.4s ease-in-out infinite;
   width: 40%;
 }

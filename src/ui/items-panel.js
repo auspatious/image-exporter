@@ -54,26 +54,30 @@ export function renderItemsPanel(el, { onSelect, map }) {
               </li>`;
             })
             .join('');
+
+          // Fetch progress overlays the bottom edge of the day's own row
+          // (absolutely positioned — see .day-progress in style.css), not
+          // a separate block that adds height and bumps every row down.
+          let progressHtml = '';
+          if (loading.active && g.day === selected) {
+            const pct = loading.total > 0 ? Math.min(100, (loading.done / loading.total) * 100) : 0;
+            const indeterminate = loading.done === 0;
+            progressHtml = `
+              <div class="day-progress" title="${escapeHtml(loading.message || 'Loading…')}">
+                <div class="bar${indeterminate ? ' indeterminate' : ''}"><span style="${indeterminate ? '' : `transform: scaleX(${pct / 100})`}"></span></div>
+              </div>`;
+          }
+
           return `<li class="${isSel}" data-day="${day}">
             <div class="day-row">
               <span class="day-main" data-select>${day}<br><span class="hint">${cloud}${cover}</span></span>
               <button type="button" class="expand-btn" data-toggle aria-expanded="${expanded}" title="${expanded ? 'Hide' : 'Show'} individual scenes">${g.items.length} ${expanded ? '▾' : '▸'}</button>
+              ${progressHtml}
             </div>
             ${expanded ? `<ul class="stac-item-list">${itemRows}</ul>` : ''}
           </li>`;
         })
         .join('')}</ul>`;
-    }
-
-    let progressHtml = '';
-    if (loading.active) {
-      const pct = loading.total > 0 ? Math.min(100, (loading.done / loading.total) * 100) : 0;
-      const indeterminate = loading.done === 0;
-      progressHtml = `
-        <div class="progress">
-          <div>${loading.message || 'Loading…'}${loading.total ? ` (${loading.done}/${loading.total})` : ''}</div>
-          <div class="bar${indeterminate ? ' indeterminate' : ''}"><span style="${indeterminate ? '' : `transform: scaleX(${pct / 100})`}"></span></div>
-        </div>`;
     }
 
     const badge = groups.length === 0
@@ -85,7 +89,7 @@ export function renderItemsPanel(el, { onSelect, map }) {
     // Re-rendering swaps in a fresh #items-list, which would otherwise reset
     // scroll to the top every time a dropdown is toggled — preserve it.
     const scrollTop = el.querySelector('#items-list')?.scrollTop ?? 0;
-    el.innerHTML = `<h2>Days <span class="badge">${badge}</span></h2>${progressHtml}${body}`;
+    el.innerHTML = `<h2>Days <span class="badge">${badge}</span></h2>${body}`;
     const newList = el.querySelector('#items-list');
     if (newList) newList.scrollTop = scrollTop;
 

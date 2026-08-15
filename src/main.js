@@ -5,14 +5,13 @@ import { searchItems } from './stac.js';
 import { addFootprintLayers, setFootprints, setSelected } from './footprint-layer.js';
 import { createRectangleDraw } from './rectangle-draw.js';
 import { groupByDay } from './mosaic.js';
-import { streamComposite, renderRGBA, toBlob, toBlobURL, cropToValid } from './export.js';
+import { streamComposite, renderRGBA, toBlob, toBlobURL, cropToValid, toGeoTIFFBlob } from './export.js';
 import { outputSize } from './overviews.js';
 import { placeName } from './geocode.js';
 import { renderSearchPanel } from './ui/search-panel.js';
 import { renderAreaPanel } from './ui/area-panel.js';
 import { renderItemsPanel } from './ui/items-panel.js';
-import { renderBandsPanel } from './ui/bands-panel.js';
-import { renderVizPanel } from './ui/viz-panel.js';
+import { renderVisualisePanel } from './ui/visualise-panel.js';
 import { renderExportPanel } from './ui/export-panel.js';
 import { renderStatusPanel } from './ui/status-panel.js';
 import { log } from './log.js';
@@ -41,8 +40,7 @@ renderAreaPanel(document.getElementById('panel-area'), {
   onClear: () => { draw.clear(); log.info('Cleared box.'); },
 });
 renderItemsPanel(document.getElementById('panel-items'), { onSelect: selectDay, map });
-renderBandsPanel(document.getElementById('panel-bands'));
-renderVizPanel(document.getElementById('panel-viz'));
+renderVisualisePanel(document.getElementById('panel-visualise'));
 renderExportPanel(document.getElementById('panel-export'), { onDownload: download });
 
 map.on('load', () => {
@@ -153,15 +151,22 @@ let fetchAbort = null;    // AbortController for the in-flight COG reads
 let overlayId = null;
 let overlayURL = null;
 
+// bands/singleBand/indexBands per vizMode → the fetch inputs for that mode.
+function activeBands() {
+  if (state.vizMode === 'single') return { band: state.singleBand };
+  if (state.vizMode === 'index') return state.indexBands;
+  return state.bands;
+}
+
 function sceneKey() {
   if (!state.drawnBbox || !state.selectedDay) return null;
   const g = state.itemsByDay.find((x) => x.day === state.selectedDay);
   if (!g) return null;
-  const b = state.bands;
   // Item ids are part of the key so a cloud-filter change that adds or
   // removes scenes on the selected day triggers a re-fetch.
   const ids = g.items.map((i) => i.id).join(';');
-  return `${state.selectedDay}|${state.drawnBbox.join(',')}|${state.targetWidth}|${b.r},${b.g},${b.b}|${ids}`;
+  const bandsKey = Object.values(activeBands()).join(',');
+  return `${state.selectedDay}|${state.drawnBbox.join(',')}|${state.targetWidth}|${state.vizMode}|${bandsKey}|${ids}`;
 }
 
 function invalidatePreview() {
@@ -201,7 +206,8 @@ async function startFetch() {
     await streamComposite({
       items: group.items,
       drawnBbox: bbox,
-      bands: state.bands,
+      mode: state.vizMode,
+      bands: activeBands(),
       width: size.width,
       height: size.height,
       signal: fetchAbort.signal,
@@ -235,7 +241,7 @@ function schedulePaint() {
   requestAnimationFrame(async () => {
     paintScheduled = false;
     if (!cache) return;
-    const img = renderRGBA(cache.arrays, state.viz);
+    const img = renderRGBA(cache.arrays, state.viz, state.vizMode);
     await paintOverlay(img, state.drawnBbox);
   });
 }
@@ -284,21 +290,34 @@ subscribe((s) => {
 async function download() {
   if (!cache) return log.warn('No preview to save.');
   try {
-    const img = cropToValid(renderRGBA(cache.arrays, state.viz), cache.arrays.mask);
     const fmt = state.viz.format;
-    const blob = await toBlob(img, fmt);
+
+    let blob, outWidth, outHeight;
+    if (fmt === 'tif') {
+      // TIF carries raw reflectance DN / index values, not the stretched
+      // display pixels — no vmin/vmax/gamma/colormap baked in.
+      ({ blob, width: outWidth, height: outHeight } = toGeoTIFFBlob(cache.arrays, state.drawnBbox, state.vizMode));
+    } else {
+      const rendered = renderRGBA(cache.arrays, state.viz, state.vizMode);
+      const img = cropToValid(rendered, cache.arrays.mask);
+      blob = await toBlob(img, fmt);
+      outWidth = img.width;
+      outHeight = img.height;
+    }
+
     const [w, s, e, n] = state.drawnBbox;
     const place = await placeName((w + e) / 2, (s + n) / 2);
     const suffix = place ? `-${place}` : '';
+    const ext = fmt === 'jpg' ? 'jpg' : fmt === 'tif' ? 'tif' : 'png';
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cogniscient-${state.selectedDay}-${img.width}px${suffix}.${fmt === 'jpg' ? 'jpg' : 'png'}`;
+    a.download = `cogniscient-${state.selectedDay}-${outWidth}px${suffix}.${ext}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    log.ok(`Saved ${img.width}×${img.height} px ${fmt.toUpperCase()}`);
+    log.ok(`Saved ${outWidth}×${outHeight} px ${fmt.toUpperCase()}`);
   } catch (err) {
     log.err(`Save failed: ${err.message}`);
   }

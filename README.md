@@ -4,8 +4,8 @@
 
 A pure client-side web app for making pretty pictures from Earth observation
 data. Search Sentinel-2 imagery, draw a box on the map, pick an acquisition
-day, tune the look, and download a PNG or JPG. All in the browser, no
-backend, no sign-up.
+day, tune the look, and download a PNG, JPG, or georeferenced TIF. All in
+the browser, no backend, no sign-up.
 
 ## Using it
 
@@ -15,14 +15,28 @@ backend, no sign-up.
    the output resolution, up to the data's native 10 m/px, with an estimate
    of how much data will be fetched.
 3. **Pick a day** from the list. Each day shows mean cloud cover, how much of
-   your box it covers, and whether it's a mosaic of several scenes. Same-day
-   scenes are merged seamlessly into one image.
-4. **Choose bands** (optional). Any Sentinel-2 band can go into the R, G, and
-   B channels. Try NIR/Red/Green for false-colour vegetation.
+   your box it covers, and a dropdown of the individual contributing scenes
+   — hover one to highlight its footprint, click to open its original STAC
+   record. Same-day scenes are merged seamlessly into one image.
+4. **Choose a preset** (optional): True colour, False colour (NIR-R-G), and
+   six spectral indices — NDVI and NDRE (vegetation), NDBI (built-up), MNDWI
+   and NDWI (water), NDMI (vegetation moisture), NBR (burn severity) — or a
+   plain Single band. Each sets up the right bands and a sensible Look range
+   in one click; the pickers underneath still let you assign any of the 12
+   Sentinel-2 bands by hand, to a custom RGB combo, a single band, or a
+   custom index `(A − B) / (A + B)`.
 5. **Tune the look.** vmin/vmax/gamma sliders re-tone the cached pixels
-   instantly, nothing is re-downloaded.
-6. **Download.** Saves exactly what you see, cropped to the valid data area,
-   as PNG or JPG.
+   instantly, nothing is re-downloaded. For an index or single band, a
+   colour map picker (Greens, Reds, Blues, Viridis, and three diverging
+   ramps — 8 options including Grayscale) recolours the same stretched
+   value, with a Reverse checkbox to flip the ramp's direction.
+6. **Download.** PNG/JPG save exactly what you see (stretched, colour-mapped,
+   cropped to valid data). TIF instead saves the **raw** reflectance/index
+   values — no stretch, no colour map baked in — as a real georeferenced
+   GeoTIFF, so it opens correctly positioned in GIS software and stays
+   analysis-ready. RGB/single-band TIFs are uint16 (the same type the
+   source Sentinel-2 data uses); index TIFs (NDVI etc.) stay float32, since
+   their values don't fit an integer type.
 
 ## How it works
 
@@ -33,19 +47,25 @@ excellent open-source libraries:
 |---|---|---|
 | Map | [maplibre-gl](https://maplibre.org/) | Basemap, footprints, box drawing, preview overlay |
 | STAC search | plain `fetch` to [Earth Search v1](https://earth-search.aws.element84.com/v1/) | Finding Sentinel-2 scenes and their COG URLs |
-| COG reads | [geotiff.js](https://geotiffjs.github.io/) | Windowed range-reads of just the bytes covering the drawn box |
+| COG reads / TIF write | [geotiff.js](https://geotiffjs.github.io/) | Windowed range-reads of just the bytes covering the drawn box; writes the georeferenced GeoTIFF download |
 | Reprojection | [proj4](http://proj4js.org/) | WGS84 box → each scene's native UTM zone |
 | Geometry | [@turf/turf](https://turfjs.org/) | Areas, intersections, coverage percentages |
 | Date picker | [flatpickr](https://flatpickr.js.org/) | Date-range selection |
 
 The export pipeline: scenes intersecting the box are grouped by solar day;
 the drawn box is reprojected to each scene's UTM zone; geotiff.js reads only
-the intersecting pixel window of each RGB COG (using internal overviews, so
-previews are fast); windows are placed at their true geographic offsets and
-merged into one mosaic (brighter pixel wins in overlaps, which heals
-resampling artefacts at scene seams); a vmin/vmax/gamma stretch renders the
-result to canvas. The preview overlay and the downloaded file are the same
-pixels, so downloading never re-fetches.
+the intersecting pixel window of each contributing COG (one band for a
+single-band view, two for an index, three for RGB — using internal
+overviews, so previews are fast); windows are placed at their true
+geographic offsets and merged into one mosaic (brighter pixel wins in
+overlaps, which heals resampling artefacts at scene seams); a
+vmin/vmax/gamma stretch (plus a colour map for single-band/index) renders
+the result to canvas for the on-screen preview and PNG/JPG downloads — the
+overlay and the downloaded file are the same pixels, so downloading never
+re-fetches. TIF downloads skip that stretch/colour entirely and write the
+raw cached values straight to a GeoTIFF, with a WGS-84 tie point and pixel
+scale computed from the crop's sub-box, so the file stays numerically
+accurate for analysis.
 
 ## Local development
 
@@ -78,6 +98,7 @@ src/
   mosaic.js          group scenes by day, cloud/coverage stats
   overviews.js       box size / output pixel geometry helpers
   size-estimate.js   fetch-size estimate and warning tiers
+  colormap.js        colour-ramp lookup tables for single-band/index views
   map.js             MapLibre setup and basemap
   footprint-layer.js scene footprint + selection layers
   rectangle-draw.js  click-drag box drawing

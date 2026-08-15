@@ -25,8 +25,22 @@ export const state = {
   drawnAreaKm2: 0,
   selectedDay: null,
 
+  // What the preview/export pipeline computes per pixel:
+  //   'rgb'    — three bands composited straight into R/G/B
+  //   'single' — one band, shown as grayscale (r = g = b = band value)
+  //   'index'  — normalized difference of two bands: (a - b) / (a + b),
+  //              shown as grayscale
+  vizMode: 'rgb',
+  // Which entry of the Bands panel's preset dropdown is active. 'custom'
+  // once the user hand-edits a band picker away from a preset's mapping.
+  preset: 'true-color',
+
   // Band → asset-key mapping for the RGB composite (Earth Search asset names)
   bands: { r: 'red', g: 'green', b: 'blue' },
+  // Asset key used when vizMode === 'single'
+  singleBand: 'nir',
+  // Asset keys used when vizMode === 'index': index = (a - b) / (a + b)
+  indexBands: { a: 'nir', b: 'red' },
 
   // Output pixel width — governed by the "Area" panel (never exceeds the
   // box's native pixel count for the collection). Height is derived from
@@ -39,6 +53,10 @@ export const state = {
     vmax: 3000,
     gamma: 1.0,
     format: 'png',
+    // Colour ramp applied to 'single'/'index' vizMode (ignored for 'rgb').
+    colormap: 'gray',
+    // Flips which end of the stretch maps to which end of the ramp.
+    colormapReversed: false,
   },
 
   // Live progress for the preview fetch

@@ -24,16 +24,73 @@ behaviour should update this file in the same commit. No drift!
      (its `self` link) in a new tab.
 4. **Preview**: a mosaicked RGB preview streams from the COGs and is shown
    as an image overlay on the map, georeferenced inside the drawn box.
-5. **Tune the look**: vmin / vmax / gamma sliders (defaults 0 / 3000 / 1.0,
-   never auto-overridden). Repaints reuse the cached pixel data; no refetch.
-6. **Bands**: user-selectable R/G/B band assignment from all 12 Sentinel-2
-   L2A bands (default red/green/blue). Changing bands refetches.
-7. **Download**: export the preview as PNG or JPG from cached data (no
-   refetch), cropped to valid data, named
+5. **Visualise** (one panel, combining band/index selection and look-tuning
+   — they're one "how the pixels are computed and shown" concern):
+   - A preset dropdown picks the visualisation mode and its band mapping in
+     one step: True colour RGB, False colour NIR-R-G, NDVI, NDBI, MNDWI,
+     NDWI, NDMI, NDRE, NBR, or Single band. Per-mode pickers underneath
+     allow full customisation (three band selects for RGB, one for single
+     band, two — "A"/"B" — for a custom index). Hand-editing a picker
+     switches the preset label to "Custom" without changing mode. Changing
+     bands, or the mode itself, refetches. Picking a preset also resets the
+     Look sliders (and colour map) to defaults sensible for that mode;
+     hand-edited bands do not.
+     - `vizMode` is one of:
+       - `rgb` — three bands composited straight into R/G/B (default: true
+         colour red/green/blue).
+       - `single` — one band, shown as grayscale (r = g = b = band value).
+       - `index` — normalized difference of two bands, `(a - b) / (a + b)`,
+         shown as grayscale. A pixel needs real data in *both* source bands
+         to count as valid — an index value of exactly 0 is a real
+         measurement, not nodata, so it isn't dropped like an all-zero RGB
+         pixel would be. Index presets and their band pairs:
+         - NDVI (vegetation) = (nir-red)/(nir+red)
+         - NDBI (built-up) = (swir16-nir)/(swir16+nir)
+         - MNDWI (water) = (green-swir16)/(green+swir16)
+         - NDWI (water, McFeeters) = (green-nir)/(green+nir)
+         - NDMI (vegetation moisture) = (nir-swir16)/(nir+swir16)
+         - NDRE (red edge / chlorophyll) = (nir-rededge1)/(nir+rededge1)
+         - NBR (burn severity) = (nir-swir22)/(nir+swir22)
+   - Below the band pickers: vmin / vmax / gamma sliders, never
+     auto-overridden by fetches — only a preset change resets them.
+     Range/step adapts to `vizMode`: 0–15000 (step 50) for `rgb`/`single`
+     reflectance DN, -1–1 (step 0.01) for `index`. For `single`/`index`
+     only, a colour-map picker sits directly below the band pickers (8
+     options: Grayscale, Greens, Reds, Blues, Viridis, and three diverging
+     ramps — Red-Yellow-Green, Red-Blue, Brown-Teal) and recolours the same
+     stretched value, with a "Reverse" checkbox beside its label that flips
+     which end of the stretch maps to which end of the ramp (works for
+     Grayscale too, since that's the same code path with no LUT applied);
+     `rgb` mode has no colour map (it already has 3 real bands) and ignores
+     `viz.colormap`/`viz.colormapReversed` even if set. Repaints reuse the
+     cached pixel data; no refetch.
+6. **Download**: export the preview as PNG, JPG, or TIF from cached data (no
+   refetch), named
    `cogniscient-<day>-<width>px-<place>.<ext>` where `<place>` is a
    reverse-geocoded name (OSM Nominatim, city/region level) for the
    centre of the drawn box. Geocoding failures are silent: the name is
    simply omitted.
+   - PNG/JPG save the stretched/colour-mapped *display* pixels, cropped to
+     valid data. No georeferencing.
+   - TIF saves the **raw** reflectance DN (`rgb`/`single`) or index values
+     (`index`) — vmin/vmax/gamma/colormap are display-only and never baked
+     into it — as a georeferenced GeoTIFF (WGS-84 tie point + pixel scale
+     computed from the crop's sub-bbox, via geotiff.js's `writeArrayBuffer`),
+     3-band for `rgb`, 1-band for `single`/`index`.
+     - `rgb`/`single` are written as **uint16**, the same sample type the
+       source Sentinel-2 COGs use. Masked-out pixels are `0` (reusing raw
+       DN's own nodata convention) with a `GDAL_NODATA: '0'` tag. Values are
+       rounded and clamped into `[0, 65535]` before writing, since a
+       `Uint16Array` assignment truncates and wraps rather than doing
+       either of those.
+     - `index` stays **float32** — its values (e.g. NDVI's -1..1) can't be
+       represented as uint16 — with masked-out pixels as `NaN` and a
+       `GDAL_NODATA: 'nan'` tag, since reusing `0` there would be wrong (an
+       index value of exactly 0 is real data).
+     - It is **not** a tiled/overview Cloud-Optimized GeoTIFF — geotiff.js's
+       writer has no tiling/overview support, only flat single-strip TIFFs;
+       see the open question in the PR/commit that introduced this if that
+       changes.
 
 ## Data handling rules
 
@@ -42,15 +99,26 @@ behaviour should update this file in the same commit. No drift!
   (larger r+g+b) to heal resampled nodata seams at scene edges.
 - **Use overviews**: read at a reasonable output resolution (target width
   default 1000 px, user adjustable), never full native resolution of a
-  large area by default.
+  large area by default. The Area panel's output-size slider always reaches
+  exactly the box's native pixel width (10 m/px) at its top end — its
+  min/max/step are computed by `sliderRange()` (`overviews.js`), which
+  shifts the slider's `min` up (by less than one step) rather than
+  rounding native max down to the nearest step, since a range input can
+  only be dragged all the way to `max` if `(max - min)` is an exact
+  multiple of `step`. When native resolution doesn't clear the slider's
+  floor by at least one step, there's genuinely only one achievable size
+  (native itself), so `sliderRange()` returns `collapsed: true` and the
+  Area panel renders the slider disabled and pinned to the right (100%)
+  rather than at an arbitrary/left-biased position.
 - **Range reads only**: compute pixel windows from the COG geotransform;
   never fetch whole files.
 - **Size warning**: before fetching, show an estimated download size
   ("fetches ~X MB" - raw fetch traffic, not output file size) with a
   soft-warning tier, and a hard limit of 10,000 km² for the drawn box.
 - **Cache keying**: the scene cache key includes day, bbox, target width,
-  bands, and the contributing item IDs, so any change that alters the
-  mosaic (including cloud-filter changes) triggers a refetch.
+  vizMode, the active bands for that mode, and the contributing item IDs, so
+  any change that alters the mosaic (including cloud-filter changes)
+  triggers a refetch.
 - If the selected day disappears from new search results, clear the
   selection and preview.
 
@@ -69,10 +137,16 @@ behaviour should update this file in the same commit. No drift!
 
 ## UI
 
-- Sidebar panels in order: Search, Area, Days, Bands, Look, Export,
-  Status. No sidebar preview image (map overlay only).
+- Sidebar panels in order: Search, Area, Days, Visualise, Export, Status.
+  No sidebar preview image (map overlay only). Visualise combines band/index
+  selection and the Look sliders in one panel (preset dropdown, band
+  pickers, colour map, then vmin/vmax/gamma) since they're one coherent
+  "how the pixels are computed and shown" concern.
 - Panels use a paint-key render guard so progress updates never rebuild
-  DOM mid-interaction (sliders, dropdowns).
+  DOM mid-interaction (sliders, dropdowns). Fetch progress renders inside
+  the loading day's own row in the Days list (a thin bar under that day's
+  subtitle), not as a separate block above the list — that used to bump
+  every row up/down each time a fetch started or finished.
 - Auspatious brand theme: Space Grotesk headings (uppercase, wide
   tracking), Inclusive Sans body, ausblue #194bfd accent, gold #fbc27b
   secondary, #232323 dark panels, rounded corners, Auspatious favicon.
@@ -85,7 +159,9 @@ behaviour should update this file in the same commit. No drift!
   store (state.js) + controller (main.js) + panels (src/ui/).
 - Unit tests (vitest, `npm test`) cover the pure logic modules: mosaic
   grouping/coverage, output-size geometry, size estimates, geocode slugify,
-  and UTM reprojection. GitHub Actions runs tests + build on every push/PR.
+  UTM reprojection, mosaic merge/crop math, the NDVI/NDBI-style normalized-
+  difference calculation, and a real read-back round trip of the GeoTIFF
+  writer. GitHub Actions runs tests + build on every push/PR.
 - Unexpected runtime errors (uncaught exceptions, unhandled promise
   rejections) are surfaced in the Status panel via `log.err`, not just the
   console.
