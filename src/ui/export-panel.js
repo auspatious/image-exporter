@@ -22,6 +22,7 @@ export function renderExportPanel(el, { onDownload }) {
         <select id="fmt">
           <option value="png" ${state.viz.format === 'png' ? 'selected' : ''}>PNG</option>
           <option value="jpg" ${state.viz.format === 'jpg' ? 'selected' : ''}>JPG</option>
+          <option value="tif" ${state.viz.format === 'tif' ? 'selected' : ''}>GeoTIFF</option>
         </select>
         <button id="dl-btn" ${canDl ? '' : 'disabled'} title="${reason || 'Save the current preview'}">Download</button>
       </div>

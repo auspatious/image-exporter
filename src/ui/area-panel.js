@@ -1,5 +1,5 @@
 import { state, set, subscribe, HARD_LIMIT_KM2 } from '../state.js';
-import { nativePixelWidth, outputSize } from '../overviews.js';
+import { nativePixelWidth, outputSize, sliderRange } from '../overviews.js';
 import { estimateBytes } from '../size-estimate.js';
 
 const MIN_WIDTH = 256;
@@ -38,8 +38,11 @@ function paint(el, onDraw, onClear) {
   }
 
   const nativeMax = nativePixelWidth(bbox, state.nativeGSD);
-  const sliderMax = Math.max(MIN_WIDTH, Math.round(nativeMax / STEP) * STEP);
-  const currentWidth = Math.min(state.targetWidth, sliderMax);
+  const { min: sliderMin, max: sliderMax, collapsed } = sliderRange(nativeMax, MIN_WIDTH, STEP);
+  // Collapsed = native resolution is the only achievable size (outputSize
+  // always clamps to it) — pin to it rather than whatever targetWidth was
+  // left over from a previous, larger box.
+  const currentWidth = collapsed ? sliderMax : Math.min(Math.max(state.targetWidth, sliderMin), sliderMax);
   const overLimit = state.drawnAreaKm2 > HARD_LIMIT_KM2;
 
   // Clamp state to slider range if needed (one clean write).
@@ -49,12 +52,13 @@ function paint(el, onDraw, onClear) {
   }
 
   const itemCount = state.itemsByDay.find((g) => g.day === state.selectedDay)?.items.length ?? 1;
+  const bandCount = state.vizMode === 'single' ? 1 : state.vizMode === 'index' ? 2 : 3;
   const sizeNow = outputSize(bbox, currentWidth, state.nativeGSD);
-  const estNow = estimateBytes({ width: sizeNow.width, height: sizeNow.height, itemCount });
+  const estNow = estimateBytes({ width: sizeNow.width, height: sizeNow.height, itemCount, bands: bandCount });
 
   // Skip DOM rebuild when nothing this panel shows has changed — otherwise
   // unrelated state emits (e.g. loading progress) yank the slider mid-drag.
-  const paintKey = `${bbox.join(',')}|${currentWidth}|${itemCount}|${overLimit}`;
+  const paintKey = `${bbox.join(',')}|${currentWidth}|${sliderMin}|${collapsed}|${itemCount}|${overLimit}|${bandCount}`;
   if (paintKey === lastPaintKey) return;
   lastPaintKey = paintKey;
 
@@ -67,7 +71,7 @@ function paint(el, onDraw, onClear) {
     <p class="hint">${state.drawnAreaKm2.toFixed(1)} km² · box native max <b>${nativeMax} px</b> at ${state.nativeGSD} m/px.</p>
     <div class="field">
       <label>Output size <span id="tw-val">${sizeLabel(sizeNow)}</span></label>
-      <input id="tw" type="range" min="${MIN_WIDTH}" max="${sliderMax}" step="${STEP}" value="${currentWidth}" />
+      <input id="tw" type="range" min="${sliderMin}" max="${sliderMax}" step="${STEP}" value="${currentWidth}" ${collapsed ? 'disabled title="Already at native resolution — nothing smaller to choose from"' : ''} />
     </div>
     <div id="tw-badge"><span class="badge ${tierClass(estNow.tier)}">fetches ~${estNow.megabytes.toFixed(0)} MB · ${tierLabel(estNow.tier)}</span></div>
     ${overLimit ? `<p class="hint" style="color:var(--danger)">Exceeds ${HARD_LIMIT_KM2.toLocaleString()} km² hard limit — redraw smaller.</p>` : ''}
@@ -84,7 +88,7 @@ function paint(el, onDraw, onClear) {
   tw.addEventListener('input', (e) => {
     const w = Number(e.target.value);
     const s = outputSize(bbox, w, state.nativeGSD);
-    const est = estimateBytes({ width: s.width, height: s.height, itemCount });
+    const est = estimateBytes({ width: s.width, height: s.height, itemCount, bands: bandCount });
     twVal.textContent = sizeLabel(s);
     twBadge.innerHTML = `<span class="badge ${tierClass(est.tier)}">fetches ~${est.megabytes.toFixed(0)} MB · ${tierLabel(est.tier)}</span>`;
   });
