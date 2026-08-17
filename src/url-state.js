@@ -36,6 +36,9 @@ export function parseParams(search) {
   const selectedDatetime = params.get('selected_datetime');
   if (selectedDatetime) out.selectedDatetime = selectedDatetime;
 
+  const basemap = params.get('basemap');
+  if (basemap) out.basemap = basemap;
+
   if (params.has('width')) {
     const width = Number(params.get('width'));
     if (Number.isFinite(width)) out.width = width;
@@ -70,6 +73,7 @@ export function buildParams(state, currentSearch) {
   else params.delete('selected_datetime');
 
   params.set('width', String(state.targetWidth));
+  params.set('basemap', state.basemap);
 
   params.set('visualise_settings', JSON.stringify({
     preset: state.preset,

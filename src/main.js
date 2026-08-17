@@ -1,7 +1,7 @@
 import { area } from '@turf/area';
 import { bboxPolygon } from '@turf/bbox-polygon';
 import { state, set, subscribe, HARD_LIMIT_KM2 } from './state.js';
-import { createMap } from './map.js';
+import { createMap, BASEMAPS, setBasemap, createToggleControl } from './map.js';
 import { searchItems } from './stac.js';
 import { addFootprintLayers, setFootprints, setSelected } from './footprint-layer.js';
 import { createRectangleDraw } from './rectangle-draw.js';
@@ -21,12 +21,75 @@ import { parseParams, buildParams } from './url-state.js';
 
 /* ── Map + panels ─────────────────────────────────────────────────────── */
 
-const map = createMap('map');
+// Restore shareable state from the URL. bbox/selected_datetime need the
+// map's style to be loaded first (see the map.on('load', ...) handler
+// below) — applied there. Everything else — including basemap, needed for
+// the map's *initial* style — is safe to apply now, before the map/panels
+// are created.
+const urlState = parseParams(location.search);
+{
+  const patch = {};
+  if (urlState.dateFrom) patch.dateFrom = urlState.dateFrom;
+  if (urlState.dateTo) patch.dateTo = urlState.dateTo;
+  if (urlState.cloudCoverMax !== undefined) patch.cloudCoverMax = urlState.cloudCoverMax;
+  if (urlState.width !== undefined) patch.targetWidth = urlState.width;
+  if (urlState.basemap && BASEMAPS.some((b) => b.id === urlState.basemap)) patch.basemap = urlState.basemap;
+  if (urlState.visualiseSettings) Object.assign(patch, urlState.visualiseSettings);
+  if (Object.keys(patch).length) set(patch);
+}
+
+const map = createMap('map', state.basemap);
 if (import.meta.env.DEV) {
   window.__map__ = map;
   window.__state__ = state;
   window.__set__ = set;
 }
+
+// Toggle button next to the zoom controls, cycling to the *other* basemap.
+// Shows the CURRENT basemap (MAP/SAT) — click only updates state;
+// setBasemap() itself happens in the subscribe below, so a URL-restored
+// basemap and a click go through the same path.
+function currentBasemap() {
+  return BASEMAPS.find((b) => b.id === state.basemap) ?? BASEMAPS[0];
+}
+function nextBasemap() {
+  const idx = BASEMAPS.findIndex((b) => b.id === state.basemap);
+  return BASEMAPS[(idx + 1) % BASEMAPS.length];
+}
+const basemapControl = createToggleControl({
+  label: () => currentBasemap().short,
+  title: () => `${currentBasemap().label} — click to switch to ${nextBasemap().label}`,
+  onClick: () => set({ basemap: nextBasemap().id }),
+});
+map.addControl(basemapControl, 'top-right');
+
+let lastBasemap = state.basemap;
+subscribe(() => {
+  if (state.basemap === lastBasemap) return;
+  lastBasemap = state.basemap;
+  setBasemap(map, state.basemap);
+  basemapControl.refresh();
+});
+
+// Toggle button for hiding/showing the preview overlay (to compare against
+// the bare basemap) without discarding the cached fetch — a repaint from
+// cache, not a re-fetch. Local UI state only, not shareable via URL.
+let previewVisible = true;
+function applyPreviewVisibility() {
+  if (overlayId && map.getLayer(overlayId)) {
+    map.setLayoutProperty(overlayId, 'visibility', previewVisible ? 'visible' : 'none');
+  }
+}
+const previewControl = createToggleControl({
+  label: () => (previewVisible ? 'ON' : 'OFF'),
+  title: () => (previewVisible ? 'Preview visible — click to hide' : 'Preview hidden — click to show'),
+  onClick: () => {
+    previewVisible = !previewVisible;
+    applyPreviewVisibility();
+    previewControl.refresh();
+  },
+});
+map.addControl(previewControl, 'top-right');
 
 renderStatusPanel(document.getElementById('panel-status'));
 
@@ -36,21 +99,6 @@ window.addEventListener('error', (e) => log.err(`Unexpected error: ${e.message}`
 window.addEventListener('unhandledrejection', (e) => {
   log.err(`Unexpected error: ${e.reason?.message ?? e.reason}`);
 });
-
-// Restore shareable state from the URL. bbox/selected_datetime need the
-// map's style to be loaded first (see the map.on('load', ...) handler
-// below) — applied there. Everything else is safe to apply now, before
-// the panels' first render.
-const urlState = parseParams(location.search);
-{
-  const patch = {};
-  if (urlState.dateFrom) patch.dateFrom = urlState.dateFrom;
-  if (urlState.dateTo) patch.dateTo = urlState.dateTo;
-  if (urlState.cloudCoverMax !== undefined) patch.cloudCoverMax = urlState.cloudCoverMax;
-  if (urlState.width !== undefined) patch.targetWidth = urlState.width;
-  if (urlState.visualiseSettings) Object.assign(patch, urlState.visualiseSettings);
-  if (Object.keys(patch).length) set(patch);
-}
 
 renderSearchPanel(document.getElementById('panel-search'), { onChange: runSearch, map });
 renderAreaPanel(document.getElementById('panel-area'), {
@@ -316,8 +364,16 @@ async function paintOverlay(img, bbox) {
     overlayId = 'preview-overlay';
     map.addSource(overlayId, { type: 'image', url, coordinates: corners });
     // Insert below the drawn-box layers so the box outline always stays on
-    // top of the preview image, not hidden underneath it.
-    map.addLayer({ id: overlayId, type: 'raster', source: overlayId, paint: { 'raster-opacity': 1.0, 'raster-fade-duration': 0 } }, 'draw-box-fill');
+    // top of the preview image, not hidden underneath it. Respects the
+    // preview visibility toggle so a repaint (viz change, basemap switch)
+    // doesn't silently re-show a preview the user hid.
+    map.addLayer({
+      id: overlayId,
+      type: 'raster',
+      source: overlayId,
+      layout: { visibility: previewVisible ? 'visible' : 'none' },
+      paint: { 'raster-opacity': 1.0, 'raster-fade-duration': 0 },
+    }, 'draw-box-fill');
   }
   const prev = overlayURL;
   overlayURL = url;
