@@ -106,6 +106,24 @@ behaviour should update this file in the same commit. No drift!
 - **Multi-COG same-day mosaic**: all scenes from the selected day that
   intersect the box are merged. On overlap, keep the brighter pixel
   (larger r+g+b) to heal resampled nodata seams at scene edges.
+  - Each item is placed into the output canvas by a true **per-pixel
+    warp** (`warpItemInto()` in `export.js`, matching how odc-loader's RIO
+    driver ultimately calls `rasterio.warp.reproject()`): for every
+    candidate destination pixel, reproject its centre into the item's UTM
+    CRS and bilinearly sample the item's own pixel grid there. Each item
+    is read once per band into a dense grid (`readSourceGrid()` — a plain
+    windowed read, no placement) at roughly the output's pixel density
+    (using overviews); the warp step is what maps it onto the shared
+    WGS-84 canvas, regardless of what UTM zone it's in.
+  - This *isn't* optional precision — placing by a single affine derived
+    from a window's corner points (whether corners in the item's own CRS,
+    or corners un-projected back to WGS-84) only holds up within one UTM
+    zone, because it assumes the CRS-to-CRS transform is uniform
+    (translate + scale, no rotation/shear) across the whole window. Real
+    UTM-to-UTM transforms have grid convergence that varies continuously
+    with position, so a large enough window straddling a zone boundary
+    visibly seams and shears under any corner-derived affine. Per-pixel
+    reprojection is the only approach that stays correct there.
 - **Use overviews**: read at a reasonable output resolution (target width
   default 1000 px, user adjustable), never full native resolution of a
   large area by default. The Area panel's output-size slider always reaches

@@ -38,9 +38,13 @@ export function utmProj(epsg) {
   return `+proj=utm +zone=${zone}${south ? ' +south' : ''} +datum=WGS84 +units=m +no_defs`;
 }
 
-export function reprojectBbox(bbox4326, epsg) {
+function projConverter(epsg) {
   proj4.defs(`EPSG:${epsg}`, utmProj(epsg));
-  const p = proj4('EPSG:4326', `EPSG:${epsg}`);
+  return proj4('EPSG:4326', `EPSG:${epsg}`);
+}
+
+export function reprojectBbox(bbox4326, epsg) {
+  const p = projConverter(epsg);
   const [w, s, e, n] = bbox4326;
   const c = [p.forward([w, s]), p.forward([e, s]), p.forward([e, n]), p.forward([w, n])];
   const xs = c.map((x) => x[0]);
@@ -48,23 +52,35 @@ export function reprojectBbox(bbox4326, epsg) {
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 }
 
+/** WGS-84 [lon, lat] → item CRS [x, y]. */
+export function projectPoint(lon, lat, epsg) {
+  return projConverter(epsg).forward([lon, lat]);
+}
+
+/** Inverse of projectPoint: item CRS [x, y] → WGS-84 [lon, lat]. */
+export function unprojectPoint(x, y, epsg) {
+  return projConverter(epsg).inverse([x, y]);
+}
+
 /* ── Windowed COG read ────────────────────────────────────────────────── */
 
 /**
- * Read the part of a COG that overlaps the drawn box, keeping proper
- * geographic alignment with the output mosaic. Returns pixels sized to
- * *only the overlap area*, plus the offset within the output where they
- * belong. This is what makes multi-tile mosaics render correctly — each
- * item's data lands at its true geographic position instead of being
- * stretched to fill the whole box.
+ * Reads the part of a COG that overlaps the drawn box as a small dense
+ * grid — pixels plus the origin/resolution needed to sample it — at
+ * roughly the output's pixel density, so overviews still get used for
+ * large boxes. Does *not* place the pixels in the output canvas: that
+ * needs a true per-pixel reprojection (see warpItemInto). A single affine
+ * derived from this window's corners only holds up within one UTM zone —
+ * for items straddling a zone boundary it visibly seams and shears, since
+ * the rotation/shear between zones isn't uniform across a large window.
  *
  * Returns `null` when the item doesn't intersect the drawn box.
  */
-async function readWindow(href, bbox4326, outWidth, outHeight, itemEpsg, signal) {
+async function readSourceGrid(href, bbox4326, outWidth, outHeight, itemEpsg, signal) {
   const tiff = await openAsset(href);
   const image = await tiff.getImage(0);
   const epsg = image.geoKeys?.ProjectedCSTypeGeoKey ?? itemEpsg;
-  const dbn = reprojectBbox(bbox4326, epsg); // drawn box in item's CRS
+  const dbn = reprojectBbox(bbox4326, epsg); // drawn box in item's CRS — fine for finding the relevant *source* pixels; the cross-zone bug was in using this to *place* output pixels, not in using it to find source ones.
   const [ox, oy] = image.getOrigin();
   const [rx, ry] = image.getResolution(); // ry negative on north-up rasters
   const W = image.getWidth();
@@ -88,129 +104,203 @@ async function readWindow(href, bbox4326, outWidth, outHeight, itemEpsg, signal)
   const px1 = Math.min(W, Math.ceil((iX1 - ox) / rx));
   const py0 = Math.max(0, Math.floor((oy - iY1) / -ry));
   const py1 = Math.min(H, Math.ceil((oy - iY0) / -ry));
+  const nativeW = px1 - px0;
+  const nativeH = py1 - py0;
+  if (nativeW <= 0 || nativeH <= 0) return null;
 
-  // Where in the output canvas does this intersection land?
+  // Rough read size — purely a performance choice (lets geotiff.js pick a
+  // suitable overview level); not the final geometry. warpItemInto samples
+  // this grid at exact reprojected coordinates regardless of its
+  // resolution, so downsampling it here doesn't reintroduce the bug.
   const boxW = dbn[2] - dbn[0];
   const boxH = dbn[3] - dbn[1];
-  const oX0 = Math.round(((iX0 - dbn[0]) / boxW) * outWidth);
-  const oX1 = Math.round(((iX1 - dbn[0]) / boxW) * outWidth);
-  const oY0 = Math.round(((dbn[3] - iY1) / boxH) * outHeight);
-  const oY1 = Math.round(((dbn[3] - iY0) / boxH) * outHeight);
-  const partW = Math.max(1, oX1 - oX0);
-  const partH = Math.max(1, oY1 - oY0);
+  const readW = Math.max(1, Math.min(nativeW, Math.round(((iX1 - iX0) / boxW) * outWidth)));
+  const readH = Math.max(1, Math.min(nativeH, Math.round(((iY1 - iY0) / boxH) * outHeight)));
 
   const data = await image.readRasters({
     window: [px0, py0, px1, py1],
-    width: partW,
-    height: partH,
+    width: readW,
+    height: readH,
     samples: [0],
     resampleMethod: 'bilinear',
     pool,
     fillValue: 0,
     signal,
   });
+
   return {
     pixels: data[0],
-    width: partW,
-    height: partH,
-    offsetX: oX0,
-    offsetY: oY0,
+    width: readW,
+    height: readH,
+    // Origin/resolution of the grid as actually read (may be downsampled
+    // from native), so callers can map any item-CRS point to a pixel here.
+    originX: ox + px0 * rx,
+    originY: oy + py0 * ry,
+    resX: (nativeW * rx) / readW,
+    resY: (nativeH * ry) / readH,
+    epsg,
   };
 }
 
-/* ── Per-item band read, by visualisation mode ───────────────────────── */
+/* ── Per-pixel warp: reprojected sampling into the output mosaic ──────── */
+
+/** Bilinearly samples a source grid at fractional pixel coords; `null` outside its bounds. */
+export function bilinearSample(grid, fx, fy) {
+  const { pixels, width, height } = grid;
+  if (fx < 0 || fy < 0 || fx > width - 1 || fy > height - 1) return null;
+  const x0 = Math.min(Math.max(width - 2, 0), Math.floor(fx));
+  const y0 = Math.min(Math.max(height - 2, 0), Math.floor(fy));
+  const x1 = Math.min(width - 1, x0 + 1);
+  const y1 = Math.min(height - 1, y0 + 1);
+  const tx = fx - x0;
+  const ty = fy - y0;
+  const v00 = pixels[y0 * width + x0];
+  const v10 = pixels[y0 * width + x1];
+  const v01 = pixels[y1 * width + x0];
+  const v11 = pixels[y1 * width + x1];
+  return v00 * (1 - tx) * (1 - ty) + v10 * tx * (1 - ty) + v01 * (1 - tx) * ty + v11 * tx * ty;
+}
 
 /**
- * Normalized difference of two same-shaped pixel arrays: (a - b) / (a + b).
- * Both source values must be non-zero for a pixel to count as valid —
- * unlike reflectance DN, a computed index can legitimately be exactly 0, so
- * the merge step's usual "all channels zero = nodata" heuristic doesn't
- * apply here.
+ * The destination pixel range (in the output canvas) a source grid could
+ * possibly cover, by un-projecting its own corners back to WGS-84.
+ * Deliberately generous by a pixel: anything outside the grid's *true*
+ * coverage is simply skipped later by bilinearSample's bounds check, so
+ * over-estimating this range costs a little wasted work, never correctness.
  */
+function destRangeFor(grid, bbox4326, outWidth, outHeight) {
+  const { originX, originY, resX, resY, width, height, epsg } = grid;
+  const corners = [
+    [originX, originY], [originX + width * resX, originY],
+    [originX, originY + height * resY], [originX + width * resX, originY + height * resY],
+  ].map(([x, y]) => unprojectPoint(x, y, epsg));
+  const lons = corners.map((c) => c[0]);
+  const lats = corners.map((c) => c[1]);
+  const [w4326, s4326, e4326, n4326] = bbox4326;
+  const boxWdeg = e4326 - w4326;
+  const boxHdeg = n4326 - s4326;
+  return {
+    i0: Math.max(0, Math.floor(((Math.min(...lons) - w4326) / boxWdeg) * outWidth) - 1),
+    i1: Math.min(outWidth, Math.ceil(((Math.max(...lons) - w4326) / boxWdeg) * outWidth) + 1),
+    j0: Math.max(0, Math.floor(((n4326 - Math.max(...lats)) / boxHdeg) * outHeight) - 1),
+    j1: Math.min(outHeight, Math.ceil(((n4326 - Math.min(...lats)) / boxHdeg) * outHeight) + 1),
+  };
+}
+
+/**
+ * Warps one item's already-read grid(s) into the shared output mosaic: for
+ * every candidate destination pixel, reproject its centre into the item's
+ * CRS and bilinearly sample each grid there. This is what a real warp
+ * (e.g. GDAL's `reproject()`, which odc-loader uses under the hood) does —
+ * true per-pixel sampling — rather than pasting a block placed by a single
+ * affine derived from a couple of corner points, which only holds up
+ * within one UTM zone.
+ *
+ * `toPixel(rawSamples)` turns the grids' raw sampled values into
+ * `{ r, g, b, valid }` for this destination pixel (or a falsy value to
+ * skip it) — mode-specific (rgb/single/index). Where items overlap, the
+ * brighter pixel wins: bilinear resampling blends nodata (0) into
+ * scene-edge pixels, darkening them, so preferring brightness heals the
+ * seam with the neighbouring scene's clean data.
+ */
+export function warpItemInto(arrays, grids, bbox4326, toPixel) {
+  const { width: outWidth, height: outHeight, r, g, b, mask } = arrays;
+  const { i0, i1, j0, j1 } = destRangeFor(grids[0], bbox4326, outWidth, outHeight);
+  const [w4326, s4326, e4326, n4326] = bbox4326;
+  const boxWdeg = e4326 - w4326;
+  const boxHdeg = n4326 - s4326;
+  const epsg = grids[0].epsg;
+
+  for (let j = j0; j < j1; j++) {
+    const lat = n4326 - ((j + 0.5) / outHeight) * boxHdeg;
+    const outRowBase = j * outWidth;
+    for (let i = i0; i < i1; i++) {
+      const lon = w4326 + ((i + 0.5) / outWidth) * boxWdeg;
+      const [x, y] = projectPoint(lon, lat, epsg);
+      const raw = grids.map((grid) => bilinearSample(grid, (x - grid.originX) / grid.resX, (y - grid.originY) / grid.resY));
+      if (raw.some((v) => v === null)) continue;
+      const px = toPixel(raw);
+      if (!px || !px.valid) continue;
+      const outIdx = outRowBase + i;
+      if (mask[outIdx] && r[outIdx] + g[outIdx] + b[outIdx] >= px.r + px.g + px.b) continue;
+      r[outIdx] = px.r; g[outIdx] = px.g; b[outIdx] = px.b; mask[outIdx] = 1;
+    }
+  }
+}
+
+/* ── Per-item read + warp, by visualisation mode ──────────────────────── */
+
+/**
+ * (a - b) / (a + b) for one pixel. Both raw inputs must be non-zero —
+ * unlike reflectance DN, a computed index can legitimately be exactly 0,
+ * so the "all channels zero = nodata" heuristic doesn't apply here.
+ */
+function normalizedDifferenceScalar(va, vb) {
+  if (va === 0 || vb === 0) return null;
+  const denom = va + vb;
+  return denom === 0 ? 0 : (va - vb) / denom;
+}
+
+/** Array-wise version of the same formula (used by tests and, in future, batch callers). */
 export function normalizedDifference(pixelsA, pixelsB) {
   const n = pixelsA.length;
   const value = new Float32Array(n);
   const valid = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
-    const va = pixelsA[i], vb = pixelsB[i];
-    if (va === 0 || vb === 0) continue;
-    const denom = va + vb;
-    value[i] = denom === 0 ? 0 : (va - vb) / denom;
+    const v = normalizedDifferenceScalar(pixelsA[i], pixelsB[i]);
+    if (v === null) continue;
+    value[i] = v;
     valid[i] = 1;
   }
   return { value, valid };
 }
 
 /**
- * Reads the bands one item contributes for the given mode and reduces them
- * to a single r/g/b-per-pixel part (all three channels equal for 'single'
- * and 'index', so the merge step below never needs to know the mode).
- * Returns `null` when the item doesn't intersect the box.
+ * Reads the bands one item contributes for the given mode and warps them
+ * into the shared output mosaic (a no-op if the item doesn't intersect the
+ * drawn box). `bands` shape depends on `mode`: `{ r, g, b }` for 'rgb'
+ * (default), `{ band }` for 'single', `{ a, b }` for 'index'
+ * (value = (a - b) / (a + b)).
  */
-async function readBandsForItem(item, mode, bands, drawnBbox, width, height, epsg, signal) {
+async function warpItem(arrays, item, mode, bands, drawnBbox, epsg, signal) {
   if (mode === 'single') {
-    const W = await readWindow(item.assets[bands.band].href, drawnBbox, width, height, epsg, signal);
-    if (!W) return null;
-    return { r: W.pixels, g: W.pixels, b: W.pixels, width: W.width, height: W.height, offsetX: W.offsetX, offsetY: W.offsetY };
+    const grid = await readSourceGrid(item.assets[bands.band].href, drawnBbox, arrays.width, arrays.height, epsg, signal);
+    if (!grid) return;
+    warpItemInto(arrays, [grid], drawnBbox, ([v]) => (v === 0 ? null : { r: v, g: v, b: v, valid: true }));
+    return;
   }
 
   if (mode === 'index') {
-    const [A, B] = await Promise.all([
-      readWindow(item.assets[bands.a].href, drawnBbox, width, height, epsg, signal),
-      readWindow(item.assets[bands.b].href, drawnBbox, width, height, epsg, signal),
+    const [gridA, gridB] = await Promise.all([
+      readSourceGrid(item.assets[bands.a].href, drawnBbox, arrays.width, arrays.height, epsg, signal),
+      readSourceGrid(item.assets[bands.b].href, drawnBbox, arrays.width, arrays.height, epsg, signal),
     ]);
-    if (!A || !B) return null;
-    const { value, valid } = normalizedDifference(A.pixels, B.pixels);
-    return { r: value, g: value, b: value, valid, width: A.width, height: A.height, offsetX: A.offsetX, offsetY: A.offsetY };
+    if (!gridA || !gridB) return;
+    warpItemInto(arrays, [gridA, gridB], drawnBbox, ([va, vb]) => {
+      const v = normalizedDifferenceScalar(va, vb);
+      return v === null ? null : { r: v, g: v, b: v, valid: true };
+    });
+    return;
   }
 
   // 'rgb' (default)
-  const [R, G, B] = await Promise.all([
-    readWindow(item.assets[bands.r].href, drawnBbox, width, height, epsg, signal),
-    readWindow(item.assets[bands.g].href, drawnBbox, width, height, epsg, signal),
-    readWindow(item.assets[bands.b].href, drawnBbox, width, height, epsg, signal),
+  const [gridR, gridG, gridB] = await Promise.all([
+    readSourceGrid(item.assets[bands.r].href, drawnBbox, arrays.width, arrays.height, epsg, signal),
+    readSourceGrid(item.assets[bands.g].href, drawnBbox, arrays.width, arrays.height, epsg, signal),
+    readSourceGrid(item.assets[bands.b].href, drawnBbox, arrays.width, arrays.height, epsg, signal),
   ]);
-  if (!R || !G || !B) return null;
-  return { r: R.pixels, g: G.pixels, b: B.pixels, width: R.width, height: R.height, offsetX: R.offsetX, offsetY: R.offsetY };
-}
-
-/**
- * Place a part's pixels at their true offset within the output mosaic.
- * Where items overlap, the brighter pixel wins: bilinear resampling blends
- * nodata (0) into scene-edge pixels, darkening them, so preferring
- * brightness heals the seam with the neighbouring scene's clean data.
- */
-export function mergeInto(arrays, part, outWidth, outHeight) {
-  const { r: rp, g: gp, b: bp, valid, width: pw, height: ph, offsetX: ox, offsetY: oy } = part;
-  const { r, g, b, mask } = arrays;
-  for (let dy = 0; dy < ph; dy++) {
-    const outRow = oy + dy;
-    if (outRow < 0 || outRow >= outHeight) continue;
-    const outRowBase = outRow * outWidth;
-    const inRowBase = dy * pw;
-    for (let dx = 0; dx < pw; dx++) {
-      const outCol = ox + dx;
-      if (outCol < 0 || outCol >= outWidth) continue;
-      const outIdx = outRowBase + outCol;
-      const inIdx = inRowBase + dx;
-      const vr = rp[inIdx], vg = gp[inIdx], vb = bp[inIdx];
-      const isValid = valid ? valid[inIdx] : !(vr === 0 && vg === 0 && vb === 0);
-      if (!isValid) continue;
-      if (mask[outIdx] && r[outIdx] + g[outIdx] + b[outIdx] >= vr + vg + vb) continue;
-      r[outIdx] = vr; g[outIdx] = vg; b[outIdx] = vb; mask[outIdx] = 1;
-    }
-  }
+  if (!gridR || !gridG || !gridB) return;
+  warpItemInto(arrays, [gridR, gridG, gridB], drawnBbox, ([vr, vg, vb]) =>
+    (vr === 0 && vg === 0 && vb === 0) ? null : { r: vr, g: vg, b: vb, valid: true });
 }
 
 /* ── Streaming composite ──────────────────────────────────────────────── */
 
 /**
- * Fire all bands of all items in parallel; call onPartial after each item's
- * bands all arrive and are merged into the mosaic. Returns the same arrays
- * that were streamed — callers can use them for both preview and download.
- *
- * `bands` shape depends on `mode`: `{ r, g, b }` for 'rgb' (default),
- * `{ band }` for 'single', `{ a, b }` for 'index' (value = (a - b) / (a + b)).
+ * Warp all contributing items in parallel; call onPartial after each
+ * item's bands all arrive and are merged into the mosaic. Returns the same
+ * arrays that were streamed — callers can use them for both preview and
+ * download.
  */
 export async function streamComposite({ items, drawnBbox, mode = 'rgb', bands = { r: 'red', g: 'green', b: 'blue' }, width, height, onPartial, onLog, signal }) {
   const arrays = {
@@ -229,8 +319,7 @@ export async function streamComposite({ items, drawnBbox, mode = 'rgb', bands = 
     contributing.map(async (item, idx) => {
       const epsg = item.properties?.['proj:epsg'] ?? item.properties?.['proj:code'];
       try {
-        const part = await readBandsForItem(item, mode, bands, drawnBbox, width, height, epsg, signal);
-        if (part) mergeInto(arrays, part, width, height);
+        await warpItem(arrays, item, mode, bands, drawnBbox, epsg, signal);
         onPartial?.(arrays, idx + 1, contributing.length);
       } catch (err) {
         // AbortError means the caller cancelled this fetch (e.g. the user

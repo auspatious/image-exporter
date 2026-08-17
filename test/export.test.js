@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { fromArrayBuffer } from 'geotiff';
 import {
-  utmProj, reprojectBbox, renderRGBA, cropToValid,
-  cropBounds, bboxForCrop, normalizedDifference, mergeInto, toGeoTIFFBlob,
+  utmProj, reprojectBbox, projectPoint, unprojectPoint, renderRGBA, cropToValid,
+  cropBounds, bboxForCrop, normalizedDifference, bilinearSample, warpItemInto, toGeoTIFFBlob,
 } from '../src/export.js';
 
 describe('utmProj', () => {
@@ -28,6 +28,47 @@ describe('reprojectBbox', () => {
     // ~0.01 deg longitude at the equator is roughly 1.1 km.
     expect(e - w).toBeGreaterThan(900);
     expect(e - w).toBeLessThan(1300);
+  });
+});
+
+describe('unprojectPoint', () => {
+  it('round-trips reprojectBbox: forward then inverse recovers the original corner', () => {
+    const epsg = 32632;
+    const [lon, lat] = [10, 45];
+    const [x, y] = reprojectBbox([lon, lat, lon + 0.001, lat + 0.001], epsg).slice(0, 2);
+    const [lonBack, latBack] = unprojectPoint(x, y, epsg);
+    // proj4's Transverse Mercator inverse is a series approximation, not
+    // exact — precision 4 (~5m) comfortably covers that while still
+    // catching a real bug (which would be off by zone-widths, not metres).
+    expect(lonBack).toBeCloseTo(lon, 4);
+    expect(latBack).toBeCloseTo(lat, 4);
+  });
+
+  it('mosaic placement bug: two UTM zones for the same WGS-84 point unproject back to it', () => {
+    // The bug this guards: placing mosaic tiles by fraction-of-reprojected-
+    // bbox (rather than un-projecting back to the shared WGS-84 frame)
+    // silently mixes reference frames when items straddle a UTM zone
+    // boundary, showing up as a seam/shear. Whatever zone an item is in,
+    // un-projecting its own coordinates must land on the same WGS-84 point.
+    const lon = 11.9999; // near the zone 32/33 boundary
+    const lat = 45;
+    for (const epsg of [32632, 32633]) {
+      const [x, y] = reprojectBbox([lon, lat, lon + 0.0001, lat + 0.0001], epsg).slice(0, 2);
+      const [lonBack, latBack] = unprojectPoint(x, y, epsg);
+      expect(lonBack).toBeCloseTo(lon, 4);
+      expect(latBack).toBeCloseTo(lat, 4);
+    }
+  });
+});
+
+describe('projectPoint', () => {
+  it('round-trips with unprojectPoint', () => {
+    const epsg = 32632;
+    const [lon, lat] = [10, 45];
+    const [x, y] = projectPoint(lon, lat, epsg);
+    const [lonBack, latBack] = unprojectPoint(x, y, epsg);
+    expect(lonBack).toBeCloseTo(lon, 4);
+    expect(latBack).toBeCloseTo(lat, 4);
   });
 });
 
@@ -206,64 +247,123 @@ describe('normalizedDifference', () => {
   });
 });
 
-describe('mergeInto', () => {
-  function emptyArrays(width, height) {
+describe('bilinearSample', () => {
+  const grid = { pixels: new Float32Array([0, 100, 200, 300]), width: 2, height: 2 };
+
+  it('returns the exact corner value at integer coords', () => {
+    expect(bilinearSample(grid, 0, 0)).toBe(0);
+    expect(bilinearSample(grid, 1, 0)).toBe(100);
+    expect(bilinearSample(grid, 0, 1)).toBe(200);
+    expect(bilinearSample(grid, 1, 1)).toBe(300);
+  });
+
+  it('interpolates at the midpoint', () => {
+    expect(bilinearSample(grid, 0.5, 0.5)).toBeCloseTo(150, 5); // average of all 4 corners
+  });
+
+  it('returns null outside the grid bounds', () => {
+    expect(bilinearSample(grid, -0.01, 0)).toBeNull();
+    expect(bilinearSample(grid, 0, 1.01)).toBeNull();
+  });
+
+  it('does not crash on a 1-pixel-wide grid', () => {
+    const thin = { pixels: new Float32Array([42]), width: 1, height: 1 };
+    expect(bilinearSample(thin, 0, 0)).toBe(42);
+  });
+});
+
+describe('warpItemInto (cross-zone mosaic placement)', () => {
+  // A synthetic "source grid" covering exactly the reprojection of
+  // bbox4326 into epsg, filled with a constant value — stands in for a
+  // COG read without needing real network/tiff data.
+  function syntheticGrid(bbox4326, epsg, value, size = 8) {
+    const dbn = reprojectBbox(bbox4326, epsg);
+    const resX = (dbn[2] - dbn[0]) / size;
+    const resY = -(dbn[3] - dbn[1]) / size;
     return {
-      r: new Float32Array(width * height),
-      g: new Float32Array(width * height),
-      b: new Float32Array(width * height),
-      mask: new Uint8Array(width * height),
+      pixels: new Float32Array(size * size).fill(value),
+      width: size, height: size,
+      originX: dbn[0], originY: dbn[3], resX, resY, epsg,
     };
   }
 
-  it('places a part at its offset within the output canvas', () => {
-    const arrays = emptyArrays(4, 4);
-    const part = {
-      r: new Float32Array([10]), g: new Float32Array([20]), b: new Float32Array([30]),
-      width: 1, height: 1, offsetX: 2, offsetY: 1,
+  function emptyArrays(width, height) {
+    return {
+      r: new Float32Array(width * height), g: new Float32Array(width * height),
+      b: new Float32Array(width * height), mask: new Uint8Array(width * height),
+      width, height,
     };
-    mergeInto(arrays, part, 4, 4);
-    const idx = 1 * 4 + 2;
-    expect(arrays.mask[idx]).toBe(1);
-    expect(arrays.r[idx]).toBe(10);
-    expect(arrays.g[idx]).toBe(20);
-    expect(arrays.b[idx]).toBe(30);
-    expect(arrays.mask[0]).toBe(0); // untouched elsewhere
+  }
+
+  const toPixel = ([v]) => (v === 0 ? null : { r: v, g: v, b: v, valid: true });
+
+  it('places an item at the geographically correct output pixel', () => {
+    const bbox = [10, -0.001, 10.002, 0.001];
+    const arrays = emptyArrays(8, 8);
+    warpItemInto(arrays, [syntheticGrid(bbox, 32631, 500)], bbox, toPixel);
+    const centerIdx = 4 * 8 + 4;
+    expect(arrays.mask[centerIdx]).toBe(1);
+    expect(arrays.r[centerIdx]).toBeCloseTo(500, 0);
+  });
+
+  it('the same drawn box mosaics to the same output pixel whichever UTM zone the item is in', () => {
+    // This is the bug: placement used to be a fraction of the drawn box
+    // reprojected into *the item's own* CRS, so which zone an item
+    // happened to be in changed where it landed — invisible for a single
+    // item filling the whole canvas, but a seam/shear once two items in
+    // different zones contribute to the same mosaic (see next test).
+    const bbox = [11.999, 44.999, 12.001, 45.001]; // straddles the 32N/33N boundary at lon 12
+    const centerIdx = 4 * 8 + 4;
+    for (const epsg of [32632, 32633]) {
+      const arrays = emptyArrays(8, 8);
+      warpItemInto(arrays, [syntheticGrid(bbox, epsg, 500)], bbox, toPixel);
+      expect(arrays.mask[centerIdx]).toBe(1);
+      expect(arrays.r[centerIdx]).toBeCloseTo(500, 0);
+    }
+  });
+
+  it('mosaics two items in different UTM zones without swapping sides at the boundary', () => {
+    // West half of the box from a zone 32 item, east half from zone 33 —
+    // like two adjacent Sentinel-2 tiles straddling the zone boundary.
+    const bbox = [11.999, 44.999, 12.001, 45.001];
+    const westHalf = [bbox[0], bbox[1], 12, bbox[3]];
+    const eastHalf = [12, bbox[1], bbox[2], bbox[3]];
+    const arrays = emptyArrays(20, 4);
+    warpItemInto(arrays, [syntheticGrid(westHalf, 32632, 100)], bbox, toPixel);
+    warpItemInto(arrays, [syntheticGrid(eastHalf, 32633, 200)], bbox, toPixel);
+
+    const row = 2;
+    const westCols = [];
+    const eastCols = [];
+    for (let i = 0; i < 20; i++) {
+      const idx = row * 20 + i;
+      if (!arrays.mask[idx]) continue;
+      if (arrays.r[idx] === 100) westCols.push(i);
+      if (arrays.r[idx] === 200) eastCols.push(i);
+    }
+    expect(westCols.length).toBeGreaterThan(0);
+    expect(eastCols.length).toBeGreaterThan(0);
+    // Every west-sourced pixel must sit strictly left of every
+    // east-sourced pixel — a shifted/rotated placement would mix them.
+    expect(Math.max(...westCols)).toBeLessThan(Math.min(...eastCols));
   });
 
   it('prefers the brighter pixel on overlap', () => {
-    const arrays = emptyArrays(1, 1);
-    mergeInto(arrays, { r: [100], g: [0], b: [0], width: 1, height: 1, offsetX: 0, offsetY: 0 }, 1, 1);
-    mergeInto(arrays, { r: [50], g: [0], b: [0], width: 1, height: 1, offsetX: 0, offsetY: 0 }, 1, 1);
-    expect(arrays.r[0]).toBe(100); // dimmer second write loses
-    mergeInto(arrays, { r: [200], g: [0], b: [0], width: 1, height: 1, offsetX: 0, offsetY: 0 }, 1, 1);
-    expect(arrays.r[0]).toBe(200); // brighter write wins
+    const bbox = [10, -0.001, 10.002, 0.001];
+    const arrays = emptyArrays(8, 8);
+    const centerIdx = 4 * 8 + 4;
+    warpItemInto(arrays, [syntheticGrid(bbox, 32631, 100)], bbox, toPixel);
+    warpItemInto(arrays, [syntheticGrid(bbox, 32631, 50)], bbox, toPixel);
+    expect(arrays.r[centerIdx]).toBe(100); // dimmer second write loses
+    warpItemInto(arrays, [syntheticGrid(bbox, 32631, 200)], bbox, toPixel);
+    expect(arrays.r[centerIdx]).toBe(200); // brighter write wins
   });
 
-  it('skips all-zero pixels as nodata when no explicit valid array is given', () => {
-    const arrays = emptyArrays(1, 1);
-    mergeInto(arrays, { r: [0], g: [0], b: [0], width: 1, height: 1, offsetX: 0, offsetY: 0 }, 1, 1);
-    expect(arrays.mask[0]).toBe(0);
-  });
-
-  it('honours an explicit valid array so a genuine index value of 0 is not treated as nodata', () => {
-    const arrays = emptyArrays(1, 1);
-    mergeInto(
-      arrays,
-      { r: [0], g: [0], b: [0], valid: new Uint8Array([1]), width: 1, height: 1, offsetX: 0, offsetY: 0 },
-      1, 1,
-    );
-    expect(arrays.mask[0]).toBe(1);
-  });
-
-  it('clips parts that extend outside the output canvas', () => {
-    const arrays = emptyArrays(2, 2);
-    const part = {
-      r: new Float32Array([1, 2, 3, 4]), g: new Float32Array(4), b: new Float32Array(4),
-      width: 2, height: 2, offsetX: 1, offsetY: 1, // bottom-right 2x2 block, half off-canvas
-    };
-    expect(() => mergeInto(arrays, part, 2, 2)).not.toThrow();
-    expect(arrays.mask[1 * 2 + 1]).toBe(1); // only the in-bounds corner is set
+  it('skips pixels the toPixel callback marks invalid (e.g. nodata)', () => {
+    const bbox = [10, -0.001, 10.002, 0.001];
+    const arrays = emptyArrays(8, 8);
+    warpItemInto(arrays, [syntheticGrid(bbox, 32631, 0)], bbox, toPixel); // all-zero grid
+    expect(Array.from(arrays.mask).every((m) => m === 0)).toBe(true);
   });
 });
 
