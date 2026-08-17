@@ -31,6 +31,10 @@ describe('parseParams', () => {
     expect(parseParams('?selected_datetime=2026-01-15').selectedDatetime).toBe('2026-01-15');
   });
 
+  it('passes basemap through as-is', () => {
+    expect(parseParams('?basemap=satellite').basemap).toBe('satellite');
+  });
+
   it('parses visualise_settings JSON', () => {
     const settings = { vizMode: 'index', indexBands: { a: 'nir', b: 'red' } };
     const out = parseParams(`?visualise_settings=${encodeURIComponent(JSON.stringify(settings))}`);
@@ -57,15 +61,17 @@ describe('buildParams', () => {
     singleBand: 'nir',
     indexBands: { a: 'nir', b: 'red' },
     viz: { vmin: -1, vmax: 1, gamma: 1, colormap: 'rdylgn', colormapReversed: false, format: 'png' },
+    basemap: 'satellite',
   };
 
-  it('serializes bbox, datetime, cloud_cover_max, selected_datetime, width', () => {
+  it('serializes bbox, datetime, cloud_cover_max, selected_datetime, width, basemap', () => {
     const params = buildParams(baseState, '');
     expect(params.get('bbox')).toBe('1,2,3,4');
     expect(params.get('datetime')).toBe('2026-01-01/2026-02-01');
     expect(params.get('cloud_cover_max')).toBe('50');
     expect(params.get('selected_datetime')).toBe('2026-01-15');
     expect(params.get('width')).toBe('1000');
+    expect(params.get('basemap')).toBe('satellite');
   });
 
   it('omits bbox/selected_datetime when there is no drawn box or selected day', () => {
@@ -103,5 +109,6 @@ describe('buildParams', () => {
     expect(out.selectedDatetime).toBe(baseState.selectedDay);
     expect(out.width).toBe(baseState.targetWidth);
     expect(out.visualiseSettings.vizMode).toBe('index');
+    expect(out.basemap).toBe('satellite');
   });
 });

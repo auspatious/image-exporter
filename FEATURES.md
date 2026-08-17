@@ -151,9 +151,22 @@ behaviour should update this file in the same commit. No drift!
 
 ## Map
 
-- MapLibre GL with the MapTiler dataviz-dark basemap (key is committed;
-  it is a public, origin-locked client key), falling back to OSM raster
-  on style error (e.g. local dev where the key is rejected).
+- MapLibre GL with two MapTiler basemaps (`BASEMAPS` in `map.js`) — the
+  dark dataviz style (default, button reads "MAP") and satellite imagery
+  (button reads "SAT") — toggled via a compact button next to the zoom
+  controls (`createToggleControl()`, a small reusable button showing
+  *current* state, also used for the preview-visibility button below).
+  Falls back to OSM raster on style error (e.g. local dev where the
+  MapTiler key is rejected).
+  - `map.setStyle()` wipes any source/layer not defined in the new style's
+    own JSON — i.e. everything this app adds itself (footprints, drawn
+    box, preview overlay). These re-add themselves on `'style.load'`
+    (fires on every style change, unlike `'load'`, which fires once ever)
+    so switching basemap never loses the current box/preview.
+- A second toggle button (same style) reads "ON"/"OFF" for whether the
+  preview overlay is currently shown, and shows/hides it without
+  discarding the cached fetch — a `visibility` layout-property flip, not a
+  re-render or re-fetch. Local UI state only, not part of the URL.
 - Default view: whole world (center [0, 20], zoom 1).
 - STAC footprints always drawn (logo blue #3474c7); when a box is drawn
   and a day is selected, only that day's footprints show, highlighted in
@@ -175,19 +188,21 @@ behaviour should update this file in the same commit. No drift!
   - `datetime` — `<dateFrom>/<dateTo>`, the same ISO interval shape the
     STAC search itself sends.
   - `cloud_cover_max`, `selected_datetime` (the selected day), `width`
-    (target output width).
+    (target output width), `basemap` (which `BASEMAPS` entry).
   - `visualise_settings` — one JSON blob: `preset`, `vizMode`, `bands`,
     `singleBand`, `indexBands`, `viz` (vmin/vmax/gamma/colormap/
     colormapReversed/format).
 - Restored on load (a `bbox` also redraws the box outline via
   `draw.setBbox()`, reusing the exact same `onDrawnBbox` path a real
-  drag/click takes — no separate restore logic to keep in sync). Written
-  back on every relevant state change, debounced 400ms so continuous
-  interactions (slider drags) don't spam the address bar; uses
-  `history.replaceState`, never `pushState`, so it doesn't pollute the
-  back button.
+  drag/click takes — no separate restore logic to keep in sync; `basemap`
+  is applied before the map is even constructed, since it's needed for
+  the initial style). Written back on every relevant state change,
+  debounced 400ms so continuous interactions (slider drags) don't spam
+  the address bar; uses `history.replaceState`, never `pushState`, so it
+  doesn't pollute the back button.
 - Not included: the collection (`sentinel-2-l2a` — hardcoded, no UI to
-  change it) and camera position (already in the hash, see above).
+  change it), camera position (already in the hash, see above), and the
+  preview-visibility toggle (ephemeral display state, not shareable).
 
 ## UI
 

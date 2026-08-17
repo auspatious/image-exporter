@@ -25,6 +25,9 @@ export const state = {
   drawnAreaKm2: 0,
   selectedDay: null,
 
+  // Which map.js BASEMAPS entry is showing.
+  basemap: 'map',
+
   // What the preview/export pipeline computes per pixel:
   //   'rgb'    — three bands composited straight into R/G/B
   //   'single' — one band, shown as grayscale (r = g = b = band value)
