@@ -10,6 +10,13 @@ behaviour should update this file in the same commit. No drift!
    for the current map view, with a date range (default: last 30 days) and
    a max cloud cover filter (default: 50%). Searching requires a minimum
    zoom level (8) to avoid huge result sets.
+   - **Jump to a place**: a debounced (300ms) autocomplete box above the
+     date range, forward-geocoding via Nominatim's `/search` endpoint
+     (`searchPlaces()` in `geocode.js` — same silent-failure contract as
+     the existing reverse-geocode used for download filenames). Up/down
+     cycles results, enter or click picks one and `fitBounds`es the map to
+     it; the map's existing `moveend` handler re-triggers the STAC search.
+     Results float over the rest of the panel rather than pushing it down.
 2. **Draw a box**: the user draws a rectangle on the map to define the
    export area. A stray click (zero-size box) cancels instead of drawing.
 3. **Pick a day**: results are grouped by acquisition day. Each day shows:

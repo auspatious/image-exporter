@@ -38,3 +38,27 @@ export async function placeName(lon, lat) {
   cache.set(key, slug);
   return slug;
 }
+
+/**
+ * Forward-geocodes free text to candidate places (for the Search panel's
+ * "jump to a place" box). Each result's `bbox` is [west, south, east,
+ * north], ready for `map.fitBounds`. Returns [] on any failure — same
+ * "silent, caller just gets nothing" contract as placeName.
+ */
+export async function searchPlaces(query, signal) {
+  if (!query.trim()) return [];
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(query)}&limit=5`;
+    const res = await fetch(url, { signal });
+    if (!res.ok) return [];
+    const results = await res.json();
+    return results.map((r) => ({
+      label: r.display_name,
+      lon: Number(r.lon),
+      lat: Number(r.lat),
+      bbox: [Number(r.boundingbox[2]), Number(r.boundingbox[0]), Number(r.boundingbox[3]), Number(r.boundingbox[1])],
+    }));
+  } catch {
+    return [];
+  }
+}
