@@ -261,12 +261,17 @@ async function paintOverlay(img, bbox) {
   const [w, s, e, n] = bbox;
   const corners = [[w, n], [e, n], [e, s], [w, s]];
   if (overlayId && map.getSource(overlayId)) {
-    map.getSource(overlayId).updateImage({ url });
-    map.getSource(overlayId).setCoordinates(corners);
+    // Update image and coordinates in one call — updateImage's image load is
+    // async, so calling setCoordinates separately right after would apply
+    // the new geometry to the still-old texture before the new pixels
+    // arrive, then get redundantly recomputed once they do.
+    map.getSource(overlayId).updateImage({ url, coordinates: corners });
   } else {
     overlayId = 'preview-overlay';
     map.addSource(overlayId, { type: 'image', url, coordinates: corners });
-    map.addLayer({ id: overlayId, type: 'raster', source: overlayId, paint: { 'raster-opacity': 1.0, 'raster-fade-duration': 0 } });
+    // Insert below the drawn-box layers so the box outline always stays on
+    // top of the preview image, not hidden underneath it.
+    map.addLayer({ id: overlayId, type: 'raster', source: overlayId, paint: { 'raster-opacity': 1.0, 'raster-fade-duration': 0 } }, 'draw-box-fill');
   }
   const prev = overlayURL;
   overlayURL = url;
