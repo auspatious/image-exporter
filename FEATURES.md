@@ -161,6 +161,33 @@ behaviour should update this file in the same commit. No drift!
 - The maplibre worker must be bundled self-contained
   (`?worker&url` import + `setWorkerUrl`) or GeoJSON layers silently
   break in production.
+- Camera position (zoom/lat/lng) lives in the URL **hash** via MapLibre's
+  own `hash: true` — not something this app's code manages.
+
+## Shareable URL
+
+- Everything else shareable lives in the URL's **query string** (kept
+  independent of the hash above), read/written via pure functions in
+  `url-state.js` (`parseParams`/`buildParams` — no `location`/`history`
+  access there, so they're plain to unit test; `main.js` supplies the
+  actual browser globals):
+  - `bbox` — drawn box, `west,south,east,north`.
+  - `datetime` — `<dateFrom>/<dateTo>`, the same ISO interval shape the
+    STAC search itself sends.
+  - `cloud_cover_max`, `selected_datetime` (the selected day), `width`
+    (target output width).
+  - `visualise_settings` — one JSON blob: `preset`, `vizMode`, `bands`,
+    `singleBand`, `indexBands`, `viz` (vmin/vmax/gamma/colormap/
+    colormapReversed/format).
+- Restored on load (a `bbox` also redraws the box outline via
+  `draw.setBbox()`, reusing the exact same `onDrawnBbox` path a real
+  drag/click takes — no separate restore logic to keep in sync). Written
+  back on every relevant state change, debounced 400ms so continuous
+  interactions (slider drags) don't spam the address bar; uses
+  `history.replaceState`, never `pushState`, so it doesn't pollute the
+  back button.
+- Not included: the collection (`sentinel-2-l2a` — hardcoded, no UI to
+  change it) and camera position (already in the hash, see above).
 
 ## UI
 

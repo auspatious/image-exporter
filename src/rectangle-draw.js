@@ -109,5 +109,12 @@ export function createRectangleDraw(map, onBbox) {
       map.getSource('draw-box').setData(EMPTY);
       onBbox?.({ bbox: null });
     },
+    /** Draws a box from a [west, south, east, north] bbox (e.g. restored
+     * from a shared URL) without going through a mouse drag. Doesn't fire
+     * onBbox — the caller already knows the bbox and drives state itself. */
+    setBbox(bbox) {
+      const [west, south, east, north] = bbox;
+      renderRectangle({ lng: west, lat: south }, { lng: east, lat: north });
+    },
   };
 }

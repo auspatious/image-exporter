@@ -14,8 +14,10 @@ import { renderAreaPanel } from './ui/area-panel.js';
 import { renderItemsPanel } from './ui/items-panel.js';
 import { renderVisualisePanel } from './ui/visualise-panel.js';
 import { renderExportPanel } from './ui/export-panel.js';
+import { renderSharePanel } from './ui/share-panel.js';
 import { renderStatusPanel } from './ui/status-panel.js';
 import { log } from './log.js';
+import { parseParams, buildParams } from './url-state.js';
 
 /* ── Map + panels ─────────────────────────────────────────────────────── */
 
@@ -35,6 +37,21 @@ window.addEventListener('unhandledrejection', (e) => {
   log.err(`Unexpected error: ${e.reason?.message ?? e.reason}`);
 });
 
+// Restore shareable state from the URL. bbox/selected_datetime need the
+// map's style to be loaded first (see the map.on('load', ...) handler
+// below) — applied there. Everything else is safe to apply now, before
+// the panels' first render.
+const urlState = parseParams(location.search);
+{
+  const patch = {};
+  if (urlState.dateFrom) patch.dateFrom = urlState.dateFrom;
+  if (urlState.dateTo) patch.dateTo = urlState.dateTo;
+  if (urlState.cloudCoverMax !== undefined) patch.cloudCoverMax = urlState.cloudCoverMax;
+  if (urlState.width !== undefined) patch.targetWidth = urlState.width;
+  if (urlState.visualiseSettings) Object.assign(patch, urlState.visualiseSettings);
+  if (Object.keys(patch).length) set(patch);
+}
+
 renderSearchPanel(document.getElementById('panel-search'), { onChange: runSearch, map });
 renderAreaPanel(document.getElementById('panel-area'), {
   onDraw: () => { log.info('Click-drag on the map to draw.'); draw.start(); },
@@ -43,11 +60,38 @@ renderAreaPanel(document.getElementById('panel-area'), {
 renderItemsPanel(document.getElementById('panel-items'), { onSelect: selectDay, map });
 renderVisualisePanel(document.getElementById('panel-visualise'));
 renderExportPanel(document.getElementById('panel-export'), { onDownload: download });
+renderSharePanel(document.getElementById('panel-share'));
+
+// 'style.load' fires on *every* style load, including a basemap switch —
+// unlike 'load' below (fires once, ever). Switching basemap replaces the
+// whole style, which wipes any source/layer not defined in the new
+// style's own JSON — i.e. everything we add ourselves (footprints, drawn
+// box, preview overlay) — so it all needs re-adding here every time.
+map.on('style.load', () => {
+  addFootprintLayers(map);
+  if (state.drawnBbox) draw.setBbox(state.drawnBbox);
+  syncFootprints();
+  // The overlay source/layer is gone too; forget the stale id/url so the
+  // next paint recreates them instead of trying to update what's missing.
+  overlayId = null;
+  overlayURL = null;
+  if (cache) schedulePaint();
+});
 
 map.on('load', () => {
-  addFootprintLayers(map);
   mapReady = true;
   log.ok('Ready. Draw a box, pick a day, tweak the look, download.');
+  // bbox/selected_datetime restored from a shared URL — reuses the exact
+  // same path a real drag/click takes. Must happen after the map's style
+  // has loaded: draw.setBbox() calls addSource/addLayer, which MapLibre
+  // throws on if called too early — doing this at top-level module init
+  // threw and aborted the rest of this file's synchronous setup, so
+  // *nothing* loaded, not just the box.
+  if (urlState.bbox) {
+    draw.setBbox(urlState.bbox);
+    onDrawnBbox({ bbox: urlState.bbox });
+    if (urlState.selectedDatetime) set({ selectedDay: urlState.selectedDatetime });
+  }
   runSearch();
 });
 map.on('moveend', () => runSearch(true));
@@ -107,7 +151,7 @@ function syncFootprints() {
 
 /* ── Rectangle draw ───────────────────────────────────────────────────── */
 
-const draw = createRectangleDraw(map, ({ bbox }) => {
+function onDrawnBbox({ bbox }) {
   if (!bbox) {
     set({ drawnBbox: null, drawnAreaKm2: 0, itemsByDay: groupByDay(state.items, null), selectedDay: null });
     syncFootprints();
@@ -128,7 +172,9 @@ const draw = createRectangleDraw(map, ({ bbox }) => {
   if (areaKm2 > HARD_LIMIT_KM2) log.err(`Box ${areaKm2.toFixed(0)} km² — over ${HARD_LIMIT_KM2} km² limit.`);
   else log.info(`Box: ${areaKm2.toFixed(1)} km²`);
   if (stillValid) startFetch();
-});
+}
+
+const draw = createRectangleDraw(map, onDrawnBbox);
 
 /* ── Day selection ────────────────────────────────────────────────────── */
 
@@ -298,6 +344,18 @@ subscribe((s) => {
       refetchTimer = setTimeout(startFetch, 300);
     }
   }
+});
+
+// Keep the URL shareable — debounced so continuous interactions (slider
+// drags, typing) don't spam the address bar. Replaces history rather than
+// pushing, so it never pollutes the back button.
+let urlSyncTimer = null;
+subscribe(() => {
+  clearTimeout(urlSyncTimer);
+  urlSyncTimer = setTimeout(() => {
+    const params = buildParams(state, location.search);
+    history.replaceState(null, '', `${location.pathname}?${params.toString()}${location.hash}`);
+  }, 400);
 });
 
 /* ── Download = save current preview data. No re-fetch. ───────────────── */

@@ -37,6 +37,9 @@ the browser, no backend, no sign-up.
    analysis-ready. RGB/single-band TIFs are uint16 (the same type the
    source Sentinel-2 data uses); index TIFs (NDVI etc.) stay float32, since
    their values don't fit an integer type.
+7. **Share it.** The URL keeps itself in sync with your box, date range,
+   cloud cover, selected day, output size, and visualisation settings —
+   copy it and send it, the page it opens will match what you had.
 
 ## How it works
 
@@ -99,6 +102,7 @@ src/
   overviews.js       box size / output pixel geometry helpers
   size-estimate.js   fetch-size estimate and warning tiers
   colormap.js        colour-ramp lookup tables for single-band/index views
+  url-state.js       shareable app state <-> URL query string (pure)
   map.js             MapLibre setup and basemap
   footprint-layer.js scene footprint + selection layers
   rectangle-draw.js  click-drag box drawing
