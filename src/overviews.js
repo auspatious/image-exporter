@@ -1,12 +1,12 @@
-import * as turf from '@turf/turf';
+import { distance } from '@turf/distance';
 
 /** Ground width and height (metres) of a WGS-84 bbox, using WGS-84 distances. */
 export function boxMeters(bbox) {
   const [w, s, e, n] = bbox;
   const centreLat = (s + n) / 2;
   return {
-    widthMeters: turf.distance([w, centreLat], [e, centreLat], { units: 'meters' }),
-    heightMeters: turf.distance([w, s], [w, n], { units: 'meters' }),
+    widthMeters: distance([w, centreLat], [e, centreLat], { units: 'meters' }),
+    heightMeters: distance([w, s], [w, n], { units: 'meters' }),
   };
 }
 

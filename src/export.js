@@ -1,6 +1,7 @@
 import { fromUrl, Pool, writeArrayBuffer } from 'geotiff';
 import proj4 from 'proj4';
-import * as turf from '@turf/turf';
+import { bboxPolygon } from '@turf/bbox-polygon';
+import { booleanIntersects } from '@turf/boolean-intersects';
 import { colormapLUT } from './colormap.js';
 
 const pool = new Pool();
@@ -221,8 +222,8 @@ export async function streamComposite({ items, drawnBbox, mode = 'rgb', bands = 
     height,
   };
 
-  const drawnPoly = turf.bboxPolygon(drawnBbox);
-  const contributing = items.filter((it) => turf.booleanIntersects(drawnPoly, it));
+  const drawnPoly = bboxPolygon(drawnBbox);
+  const contributing = items.filter((it) => booleanIntersects(drawnPoly, it));
 
   await Promise.all(
     contributing.map(async (item, idx) => {

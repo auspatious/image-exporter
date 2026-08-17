@@ -1,4 +1,5 @@
-import * as turf from '@turf/turf';
+import { area } from '@turf/area';
+import { bboxPolygon } from '@turf/bbox-polygon';
 import { state, set, subscribe, HARD_LIMIT_KM2 } from './state.js';
 import { createMap } from './map.js';
 import { searchItems } from './stac.js';
@@ -113,19 +114,19 @@ const draw = createRectangleDraw(map, ({ bbox }) => {
     invalidatePreview();
     return;
   }
-  const area = turf.area(turf.bboxPolygon(bbox)) / 1_000_000;
+  const areaKm2 = area(bboxPolygon(bbox)) / 1_000_000;
   const itemsByDay = groupByDay(state.items, bbox);
   const stillValid = state.selectedDay && itemsByDay.some((g) => g.day === state.selectedDay);
   set({
     drawnBbox: bbox,
-    drawnAreaKm2: area,
+    drawnAreaKm2: areaKm2,
     itemsByDay,
     selectedDay: stillValid ? state.selectedDay : null,
   });
   syncFootprints();
   invalidatePreview();
-  if (area > HARD_LIMIT_KM2) log.err(`Box ${area.toFixed(0)} km² — over ${HARD_LIMIT_KM2} km² limit.`);
-  else log.info(`Box: ${area.toFixed(1)} km²`);
+  if (areaKm2 > HARD_LIMIT_KM2) log.err(`Box ${areaKm2.toFixed(0)} km² — over ${HARD_LIMIT_KM2} km² limit.`);
+  else log.info(`Box: ${areaKm2.toFixed(1)} km²`);
   if (stillValid) startFetch();
 });
 
