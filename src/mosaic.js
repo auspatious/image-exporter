@@ -1,4 +1,9 @@
-import * as turf from '@turf/turf';
+import { area } from '@turf/area';
+import { bboxPolygon } from '@turf/bbox-polygon';
+import { booleanIntersects } from '@turf/boolean-intersects';
+import { featureCollection } from '@turf/helpers';
+import { intersect } from '@turf/intersect';
+import { union } from '@turf/union';
 
 /**
  * Group STAC items by solar day. For each day, filter to items intersecting
@@ -9,7 +14,7 @@ import * as turf from '@turf/turf';
  * (null when no box is drawn).
  */
 export function groupByDay(items, drawnBbox) {
-  const drawnPoly = drawnBbox ? turf.bboxPolygon(drawnBbox) : null;
+  const drawnPoly = drawnBbox ? bboxPolygon(drawnBbox) : null;
   const groups = new Map();
 
   for (const item of items) {
@@ -19,7 +24,7 @@ export function groupByDay(items, drawnBbox) {
     let intersects = true;
     if (drawnPoly) {
       try {
-        intersects = turf.booleanIntersects(drawnPoly, item);
+        intersects = booleanIntersects(drawnPoly, item);
       } catch {
         intersects = false;
       }
@@ -57,13 +62,13 @@ function coveragePct(items, drawnPoly) {
   let covered = null;
   for (const item of items) {
     try {
-      const clip = turf.intersect(turf.featureCollection([drawnPoly, item]));
+      const clip = intersect(featureCollection([drawnPoly, item]));
       if (!clip) continue;
-      covered = covered ? turf.union(turf.featureCollection([covered, clip])) : clip;
+      covered = covered ? union(featureCollection([covered, clip])) : clip;
     } catch {
       // Skip items with geometry that turf can't process.
     }
   }
   if (!covered) return 0;
-  return Math.min(100, (turf.area(covered) / turf.area(drawnPoly)) * 100);
+  return Math.min(100, (area(covered) / area(drawnPoly)) * 100);
 }
