@@ -38,9 +38,18 @@ export function utmProj(epsg) {
   return `+proj=utm +zone=${zone}${south ? ' +south' : ''} +datum=WGS84 +units=m +no_defs`;
 }
 
+// warpItemInto calls this per destination pixel (hundreds of thousands of
+// times per item) — caching avoids re-parsing the proj string and
+// reconstructing the whole conversion pipeline on every single pixel.
+const projConverterCache = new Map();
 function projConverter(epsg) {
-  proj4.defs(`EPSG:${epsg}`, utmProj(epsg));
-  return proj4('EPSG:4326', `EPSG:${epsg}`);
+  let p = projConverterCache.get(epsg);
+  if (!p) {
+    proj4.defs(`EPSG:${epsg}`, utmProj(epsg));
+    p = proj4('EPSG:4326', `EPSG:${epsg}`);
+    projConverterCache.set(epsg, p);
+  }
+  return p;
 }
 
 export function reprojectBbox(bbox4326, epsg) {
