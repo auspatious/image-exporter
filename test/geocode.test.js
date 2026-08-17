@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { slugify, placeName } from '../src/geocode.js';
+import { slugify, placeName, searchPlaces } from '../src/geocode.js';
 
 describe('slugify', () => {
   it('lowercases and hyphenates spaces', () => {
@@ -36,5 +36,36 @@ describe('placeName', () => {
   it('returns null when the response has no usable address field', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
     expect(await placeName(3.456, 4.567)).toBeNull();
+  });
+});
+
+describe('searchPlaces', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('maps results and reorders boundingbox [s,n,w,e] into bbox [w,s,e,n]', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ([
+        { display_name: 'Canberra, Australia', lon: '149.13', lat: '-35.28', boundingbox: ['-35.4', '-35.1', '149.0', '149.2'] },
+      ]),
+    }));
+    const results = await searchPlaces('Canberra');
+    expect(results).toEqual([
+      { label: 'Canberra, Australia', lon: 149.13, lat: -35.28, bbox: [149.0, -35.4, 149.2, -35.1] },
+    ]);
+  });
+
+  it('returns [] for blank queries without fetching', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await searchPlaces('   ')).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns [] (not throw) when the request fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+    expect(await searchPlaces('Canberra')).toEqual([]);
   });
 });
