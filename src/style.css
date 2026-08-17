@@ -478,3 +478,18 @@ button:disabled {
 @keyframes spin {
   to { transform: translate(-50%, -50%) rotate(360deg); }
 }
+
+/* Basemap toggle: a MapLibre control button, but with a text label instead
+   of the icon these buttons are normally sized for. */
+.basemap-toggle-btn {
+  font: inherit;
+  font-family: var(--heading);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: #333;
+  cursor: pointer;
+}

@@ -10,6 +10,49 @@ setWorkerUrl(maplibreWorkerUrl);
 // Public client-side key, locked to allowed origins in the MapTiler dashboard.
 const MAPTILER_KEY = 'ZUYgDOuttJIaWHdE632Y';
 const MAPTILER_STYLE = `https://api.maptiler.com/maps/dataviz-dark/style.json?key=${MAPTILER_KEY}`;
+const MAPTILER_SATELLITE_STYLE = `https://api.maptiler.com/maps/satellite/style.json?key=${MAPTILER_KEY}`;
+
+const BASEMAPS = [
+  { label: 'Map', short: 'MAP', style: MAPTILER_STYLE },
+  { label: 'Satellite', short: 'SAT', style: MAPTILER_SATELLITE_STYLE },
+];
+
+// A single button that toggles between basemaps, showing the label of the
+// one you'd switch *to* (the common convention for a 2-way toggle).
+class BasemapToggleControl {
+  constructor(styles) {
+    this._styles = styles;
+    this._index = 0;
+  }
+
+  onAdd(map) {
+    this._map = map;
+    this._container = document.createElement('div');
+    this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+    this._button = document.createElement('button');
+    this._button.type = 'button';
+    this._button.className = 'basemap-toggle-btn';
+    this._button.addEventListener('click', () => {
+      this._index = (this._index + 1) % this._styles.length;
+      map.setStyle(this._styles[this._index].style);
+      this._updateLabel();
+    });
+    this._container.appendChild(this._button);
+    this._updateLabel();
+    return this._container;
+  }
+
+  onRemove() {
+    this._container.remove();
+    this._map = undefined;
+  }
+
+  _updateLabel() {
+    const next = this._styles[(this._index + 1) % this._styles.length];
+    this._button.textContent = next.short;
+    this._button.title = `Switch to ${next.label}`;
+  }
+}
 
 // Fallback for origins the MapTiler key doesn't allow (e.g. local dev).
 const OSM_STYLE = {
@@ -49,6 +92,7 @@ export function createMap(container) {
   map.addControl(new NavigationControl({ visualizePitch: false }), 'top-right');
   map.addControl(new ScaleControl({ maxWidth: 120, unit: 'metric' }));
   map.addControl(new GeolocateControl({ trackUserLocation: false }), 'top-right');
+  map.addControl(new BasemapToggleControl(BASEMAPS), 'top-right');
 
   return map;
 }
