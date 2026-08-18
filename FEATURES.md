@@ -56,6 +56,12 @@ behaviour should update this file in the same commit. No drift!
    as an image overlay on the map, georeferenced inside the drawn box.
 5. **Visualise** (one panel, combining band/index selection and look-tuning
    — they're one "how the pixels are computed and shown" concern):
+   - A small "Reset" button beside the Preset label goes straight back to
+     True colour RGB with every visualise field (bands, vmin/vmax/gamma,
+     colour map, reversed) at its `DEFAULT_STATE` value (`state.js`) — a
+     full reset, unlike picking a preset, which only resets the Look
+     sliders/colour map sensible for that mode and leaves anything else
+     (e.g. a hand-edited band) alone.
    - A preset dropdown picks the visualisation mode and its band mapping in
      one step: True colour RGB, False colour NIR-R-G, NDVI, NDBI, MNDWI,
      NDWI, NDMI, NDRE, NBR, or Single band. Per-mode pickers underneath
@@ -215,14 +221,22 @@ behaviour should update this file in the same commit. No drift!
   - `bbox` — drawn box, `west_south_east_north` (underscore-joined, 5
     decimal places ≈ 1m; comma isn't used since it gets percent-encoded).
     Always written when a box is drawn (no meaningful "default" bbox).
-  - `datetime` — `<dateFrom>/<dateTo>`, only written when it differs from
-    the rolling "last 30 days" default. When absent but `selected_datetime`
-    is present, `main.js` searches just that one day instead of falling
-    back to the rolling default — otherwise a link shared weeks or months
-    ago could silently stop finding the item it was shared for.
-  - `selected_datetime` (the selected day) — always written when a day is
-    selected. `cloud_cover_max`, `width` (target output width), `basemap`
-    (which `BASEMAPS` entry) — written only on deviation from default.
+  - The date **range** itself (`dateFrom`/`dateTo`) is never written —
+    only `datetime`, a single-value date (the selected day), is, always,
+    whenever a day is selected. On restore, `main.js` searches a
+    single-day window around it instead of the rolling "last 30 days"
+    default — otherwise a link shared weeks or months ago could silently
+    stop finding the item it was shared for.
+    `parseParams` tells the two shapes `datetime` can carry apart by
+    whether it contains a `/`: a single value (no `/`) is the selected day
+    (the current, only, format `buildParams` writes); a `<dateFrom>/<dateTo>`
+    range is the legacy date-range format from before this param was
+    repurposed, and doesn't set a selected day on its own — a legacy
+    `selected_datetime` param alongside it (older links always paired the
+    two) still does, and is honored for backward compat even though
+    `buildParams` no longer writes it either.
+  - `cloud_cover_max`, `width` (target output width), `basemap` (which
+    `BASEMAPS` entry) — written only on deviation from default.
   - Visualise settings, one flat param per field, written only on
     deviation: `preset`, `viz_mode`, `bands` (dash-joined `r-g-b`),
     `single_band`, `index_bands` (dash-joined `a-b`), `vmin`, `vmax`,

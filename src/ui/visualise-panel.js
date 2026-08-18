@@ -1,4 +1,4 @@
-import { state, set, setViz, subscribe } from '../state.js';
+import { state, set, setViz, subscribe, DEFAULT_STATE } from '../state.js';
 import { COLORMAPS } from '../colormap.js';
 
 // Sentinel-2 L2A bands as exposed by Earth Search asset keys.
@@ -75,6 +75,17 @@ function applyPreset(id) {
   });
 }
 
+function resetToDefaults() {
+  set({
+    preset: DEFAULT_STATE.preset,
+    vizMode: DEFAULT_STATE.vizMode,
+    bands: { ...DEFAULT_STATE.bands },
+    singleBand: DEFAULT_STATE.singleBand,
+    indexBands: { ...DEFAULT_STATE.indexBands },
+    viz: { ...DEFAULT_STATE.viz },
+  });
+}
+
 // Rebuilds just the mode-specific band pickers, and marks the preset
 // selector "Custom" the moment the user hand-edits one away from a preset.
 function renderBandControls(panelEl) {
@@ -139,7 +150,10 @@ export function renderVisualisePanel(el) {
     el.innerHTML = `
       <h2>Visualise</h2>
       <div class="field">
-        <label for="preset">Preset</label>
+        <div class="field-header">
+          <label for="preset">Preset</label>
+          <button type="button" id="reset-viz" class="reset-btn" title="Back to true colour, all defaults">Reset</button>
+        </div>
         <select id="preset">
           ${PRESETS.map((p) => `<option value="${p.id}" ${state.preset === p.id ? 'selected' : ''}>${p.label}</option>`).join('')}
         </select>
@@ -166,6 +180,10 @@ export function renderVisualisePanel(el) {
     // pick up different index bands and a different colour map.
     el.querySelector('#preset').addEventListener('change', (e) => {
       applyPreset(e.target.value);
+      build();
+    });
+    el.querySelector('#reset-viz').addEventListener('click', () => {
+      resetToDefaults();
       build();
     });
 
