@@ -7,23 +7,19 @@ const listeners = new Set();
 
 export const HARD_LIMIT_KM2 = 10000;
 
-export const state = {
-  // Search filters — default to the last 30 days.
-  dateFrom: isoDate(new Date(Date.now() - 30 * 86400_000)),
-  dateTo: isoDate(new Date()),
+/** Search filters default to the last 30 days, computed fresh each call. */
+export function defaultDateRange() {
+  return {
+    dateFrom: isoDate(new Date(Date.now() - 30 * 86400_000)),
+    dateTo: isoDate(new Date()),
+  };
+}
+
+// Static defaults for the fields url-state.js diffs against to decide what's
+// worth putting in a shareable URL. dateFrom/dateTo aren't here since
+// there's no fixed default to diff against — see defaultDateRange() above.
+export const DEFAULT_STATE = {
   cloudCoverMax: 50,
-  collection: 'sentinel-2-l2a',
-  minSearchZoom: 8,
-  nativeGSD: 10, // Sentinel-2 red/green/blue
-
-  // STAC results
-  items: [],
-  itemsByDay: [],
-
-  // User selection
-  drawnBbox: null,
-  drawnAreaKm2: 0,
-  selectedDay: null,
 
   // Which map.js BASEMAPS entry is showing.
   basemap: 'map',
@@ -61,6 +57,27 @@ export const state = {
     // Flips which end of the stretch maps to which end of the ramp.
     colormapReversed: false,
   },
+};
+
+export const state = {
+  ...defaultDateRange(),
+  collection: 'sentinel-2-l2a',
+  minSearchZoom: 8,
+  nativeGSD: 10, // Sentinel-2 red/green/blue
+
+  // STAC results
+  items: [],
+  itemsByDay: [],
+
+  // User selection
+  drawnBbox: null,
+  drawnAreaKm2: 0,
+  selectedDay: null,
+
+  ...DEFAULT_STATE,
+  bands: { ...DEFAULT_STATE.bands },
+  indexBands: { ...DEFAULT_STATE.indexBands },
+  viz: { ...DEFAULT_STATE.viz },
 
   // Live progress for the preview fetch
   loading: { active: false, done: 0, total: 0, message: '' },

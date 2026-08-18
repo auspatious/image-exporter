@@ -6,12 +6,20 @@ import { intersect } from '@turf/intersect';
 import { union } from '@turf/union';
 
 /**
- * Group STAC items by solar day. For each day, filter to items intersecting
- * the drawn box (if any) and sort by cloud cover ascending.
+ * Group STAC items by solar day and sort each day's items by cloud cover
+ * ascending. A day is only included if it has at least one item
+ * intersecting the drawn box (if any) — but once included, `items` lists
+ * *every* item found for that day (e.g. a scene the search's viewport
+ * caught that doesn't actually overlap the drawn box), not just the
+ * intersecting ones. `renderItems` is the intersecting subset actually
+ * used for the mosaic/coverage/cloud-cover stats; `intersectingIds` (a
+ * `Set`, or null with no drawn box) tells callers which of `items` that is,
+ * e.g. to colour footprints differently.
  *
- * Returns a list of `{ day, items, meanCloud, coverage }` groups, where
- * `coverage` is the % of the drawn box covered by the day's footprints
- * (null when no box is drawn).
+ * Returns a list of
+ * `{ day, items, renderItems, intersectingIds, meanCloud, coverage }`
+ * groups, where `coverage` is the % of the drawn box covered by
+ * `renderItems`'s footprints (null when no box is drawn).
  */
 export function groupByDay(items, drawnBbox) {
   const drawnPoly = drawnBbox ? bboxPolygon(drawnBbox) : null;
@@ -21,34 +29,42 @@ export function groupByDay(items, drawnBbox) {
     const dt = item.properties?.datetime;
     if (!dt) continue;
     const day = dt.slice(0, 10);
-    let intersects = true;
-    if (drawnPoly) {
-      try {
-        intersects = booleanIntersects(drawnPoly, item);
-      } catch {
-        intersects = false;
-      }
-    }
-    if (!intersects) continue;
     let g = groups.get(day);
     if (!g) {
-      g = { day, items: [], meanCloud: 0 };
+      g = { day, items: [] };
       groups.set(day, g);
     }
     g.items.push(item);
   }
 
-  const out = [...groups.values()].map((g) => {
-    const clouds = g.items
-      .map((i) => i.properties?.['eo:cloud_cover'])
-      .filter((c) => typeof c === 'number');
-    g.meanCloud = clouds.length ? clouds.reduce((a, b) => a + b, 0) / clouds.length : null;
-    g.items.sort(
-      (a, b) => (a.properties?.['eo:cloud_cover'] ?? 100) - (b.properties?.['eo:cloud_cover'] ?? 100),
-    );
-    g.coverage = coveragePct(g.items, drawnPoly);
-    return g;
-  });
+  const out = [...groups.values()]
+    .map((g) => {
+      let intersectingIds = null;
+      let renderItems = g.items;
+      if (drawnPoly) {
+        intersectingIds = new Set();
+        renderItems = g.items.filter((item) => {
+          let hit;
+          try {
+            hit = booleanIntersects(drawnPoly, item);
+          } catch {
+            hit = false;
+          }
+          if (hit) intersectingIds.add(item.id);
+          return hit;
+        });
+      }
+      const clouds = renderItems
+        .map((i) => i.properties?.['eo:cloud_cover'])
+        .filter((c) => typeof c === 'number');
+      const meanCloud = clouds.length ? clouds.reduce((a, b) => a + b, 0) / clouds.length : null;
+      const sortedItems = [...g.items].sort(
+        (a, b) => (a.properties?.['eo:cloud_cover'] ?? 100) - (b.properties?.['eo:cloud_cover'] ?? 100),
+      );
+      const coverage = coveragePct(renderItems, drawnPoly);
+      return { day: g.day, items: sortedItems, renderItems, intersectingIds, meanCloud, coverage };
+    })
+    .filter((g) => !drawnPoly || g.renderItems.length > 0);
 
   out.sort((a, b) => (a.day < b.day ? 1 : -1));
   return out;

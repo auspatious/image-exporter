@@ -19,7 +19,7 @@ function openItemJSON(item) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export function renderItemsPanel(el, { onSelect, map }) {
+export function renderItemsPanel(el, { onSelect, onRedraw, isRedrawAvailable, map }) {
   // Which days have their per-scene dropdown open. UI-only state — not
   // part of the app store, so it survives repaints but not page reload.
   const expandedDays = new Set();
@@ -48,7 +48,11 @@ export function renderItemsPanel(el, { onSelect, map }) {
               const itCloud = typeof it.properties?.['eo:cloud_cover'] === 'number'
                 ? `${it.properties['eo:cloud_cover'].toFixed(0)}%`
                 : '—';
-              return `<li class="stac-item-row" data-idx="${idx}" title="Hover to highlight, click to open the original STAC item">
+              // Every scene found for the day is listed, not just ones
+              // intersecting the box — dim the ones that don't (found
+              // nearby, not used in the mosaic).
+              const outside = g.intersectingIds && !g.intersectingIds.has(it.id);
+              return `<li class="stac-item-row${outside ? ' outside-box' : ''}" data-idx="${idx}" title="${outside ? 'Outside the drawn box, not used in the mosaic. ' : ''}Hover to highlight, click to open the original STAC item">
                 <span>${escapeHtml(it.id)}</span>
                 <span class="hint">${itCloud} cloud</span>
               </li>`;
@@ -68,9 +72,17 @@ export function renderItemsPanel(el, { onSelect, map }) {
               </div>`;
           }
 
+          // Panning can add/remove scenes for the selected day without
+          // touching the rendered preview — offer a manual redraw instead
+          // of jumping the image out from under the user.
+          const redrawHtml = g.day === selected && !loading.active && isRedrawAvailable?.()
+            ? `<button type="button" class="redraw-btn" data-redraw title="More/different scenes are now available for this day">Redraw</button>`
+            : '';
+
           return `<li class="${isSel}" data-day="${day}">
             <div class="day-row">
               <span class="day-main" data-select>${day}<br><span class="hint">${cloud}${cover}</span></span>
+              ${redrawHtml}
               <button type="button" class="expand-btn" data-toggle aria-expanded="${expanded}" title="${expanded ? 'Hide' : 'Show'} individual scenes">${g.items.length} ${expanded ? '▾' : '▸'}</button>
               ${progressHtml}
             </div>
@@ -99,6 +111,11 @@ export function renderItemsPanel(el, { onSelect, map }) {
       if (!group) return;
 
       li.querySelector('.day-main')?.addEventListener('click', () => onSelect?.(day));
+
+      li.querySelector('.redraw-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onRedraw?.();
+      });
 
       const toggleBtn = li.querySelector('.expand-btn');
       toggleBtn?.addEventListener('click', (e) => {
