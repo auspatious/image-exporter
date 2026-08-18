@@ -13,7 +13,7 @@
  * and applies the result / writes it back.
  */
 
-import { DEFAULT_STATE, defaultDateRange } from './state.js';
+import { DEFAULT_STATE } from './state.js';
 
 /** Parses recognized params out of a query string (e.g. `location.search`). */
 export function parseParams(search) {
@@ -26,11 +26,20 @@ export function parseParams(search) {
     if (parts.length === 4 && parts.every(Number.isFinite)) out.bbox = parts;
   }
 
+  // `datetime` is a single day (the new format) unless it contains a `/`,
+  // in which case it's a legacy date *range* — which can't express a
+  // single selected day, so it doesn't set one here; a legacy
+  // `selected_datetime` alongside it (below) is what old links relied on
+  // for that instead.
   const datetime = params.get('datetime');
   if (datetime) {
-    const [from, to] = datetime.split('/');
-    if (from) out.dateFrom = from;
-    if (to) out.dateTo = to;
+    if (datetime.includes('/')) {
+      const [from, to] = datetime.split('/');
+      if (from) out.dateFrom = from;
+      if (to) out.dateTo = to;
+    } else {
+      out.selectedDatetime = datetime;
+    }
   }
 
   // Number(null) is 0, not NaN — check presence first so an absent param
@@ -40,6 +49,8 @@ export function parseParams(search) {
     if (Number.isFinite(cloudCoverMax)) out.cloudCoverMax = cloudCoverMax;
   }
 
+  // Legacy param name for the selected day — superseded by `datetime`
+  // above, but still honored (and wins if both are present) for old links.
   const selectedDatetime = params.get('selected_datetime');
   if (selectedDatetime) out.selectedDatetime = selectedDatetime;
 
@@ -128,21 +139,18 @@ export function buildParams(state, currentSearch) {
   if (state.drawnBbox) params.set('bbox', state.drawnBbox.map((n) => +n.toFixed(5)).join('_'));
   else params.delete('bbox');
 
-  // No fixed default to diff against (it's a rolling "last 30 days"), so
-  // compare against what a fresh default would be right now. If the user
-  // never touched the date filter this omits `datetime` entirely — on
-  // reload, main.js falls back to a single-day window around
-  // selected_datetime instead, which (unlike the rolling default) still
-  // finds the shared item weeks or months later.
-  const defaultRange = defaultDateRange();
-  const isDefaultRange = state.dateFrom === defaultRange.dateFrom && state.dateTo === defaultRange.dateTo;
-  if (!isDefaultRange) params.set('datetime', `${state.dateFrom}/${state.dateTo}`);
+  // The date range itself isn't stored — only the selected day is, as a
+  // single-value `datetime` (no `/`, so parseParams can tell it apart from
+  // the legacy range format above). On reload, main.js searches a
+  // single-day window around it, which (unlike the search's own rolling
+  // "last 30 days" default) still finds the shared item weeks or months
+  // later regardless of the actual range the sharer had been browsing with.
+  if (state.selectedDay) params.set('datetime', state.selectedDay);
   else params.delete('datetime');
+  // Superseded by `datetime` above.
+  params.delete('selected_datetime');
 
   setOrDelete('cloud_cover_max', String(state.cloudCoverMax), state.cloudCoverMax === DEFAULT_STATE.cloudCoverMax);
-
-  if (state.selectedDay) params.set('selected_datetime', state.selectedDay);
-  else params.delete('selected_datetime');
 
   setOrDelete('width', String(state.targetWidth), state.targetWidth === DEFAULT_STATE.targetWidth);
   setOrDelete('basemap', state.basemap, state.basemap === DEFAULT_STATE.basemap);

@@ -16,10 +16,18 @@ describe('parseParams', () => {
     expect(parseParams('?bbox=a_b_c_d').bbox).toBeUndefined();
   });
 
-  it('splits datetime into dateFrom/dateTo', () => {
+  it('splits a legacy datetime range into dateFrom/dateTo, without picking a selected day', () => {
     const out = parseParams('?datetime=2026-01-01/2026-02-01');
     expect(out.dateFrom).toBe('2026-01-01');
     expect(out.dateTo).toBe('2026-02-01');
+    expect(out.selectedDatetime).toBeUndefined();
+  });
+
+  it('treats a single-value datetime as the selected day', () => {
+    const out = parseParams('?datetime=2026-01-15');
+    expect(out.selectedDatetime).toBe('2026-01-15');
+    expect(out.dateFrom).toBeUndefined();
+    expect(out.dateTo).toBeUndefined();
   });
 
   it('parses cloud_cover_max and width as numbers', () => {
@@ -28,8 +36,15 @@ describe('parseParams', () => {
     expect(out.width).toBe(800);
   });
 
-  it('passes selected_datetime through as-is', () => {
+  it('passes a legacy selected_datetime through as-is', () => {
     expect(parseParams('?selected_datetime=2026-01-15').selectedDatetime).toBe('2026-01-15');
+  });
+
+  it('prefers a legacy selected_datetime over a datetime range, for old links that carried both', () => {
+    const out = parseParams('?datetime=2026-01-01/2026-02-01&selected_datetime=2026-01-15');
+    expect(out.dateFrom).toBe('2026-01-01');
+    expect(out.dateTo).toBe('2026-02-01');
+    expect(out.selectedDatetime).toBe('2026-01-15');
   });
 
   it('passes basemap through as-is', () => {
@@ -106,25 +121,30 @@ describe('buildParams', () => {
     expect(params.get('bbox')).toBe('1.12346_2_3_4');
   });
 
-  it('omits bbox/selected_datetime when there is no drawn box or selected day', () => {
+  it('omits bbox/datetime when there is no drawn box or selected day', () => {
     const params = buildParams(defaultState, '');
     expect(params.has('bbox')).toBe(false);
-    expect(params.has('selected_datetime')).toBe(false);
-  });
-
-  it('writes selected_datetime whenever a day is selected, deviation or not', () => {
-    const params = buildParams({ ...defaultState, selectedDay: '2026-01-15' }, '');
-    expect(params.get('selected_datetime')).toBe('2026-01-15');
-  });
-
-  it('omits datetime when the range matches the current rolling default', () => {
-    const params = buildParams(defaultState, '');
     expect(params.has('datetime')).toBe(false);
   });
 
-  it('writes datetime when the range deviates from default', () => {
+  it('writes datetime as the selected day (a single value), whenever a day is selected', () => {
+    const params = buildParams({ ...defaultState, selectedDay: '2026-01-15' }, '');
+    expect(params.get('datetime')).toBe('2026-01-15');
+  });
+
+  it('never writes the date range — datetime is only ever the selected day', () => {
     const params = buildParams({ ...defaultState, dateFrom: '2020-01-01', dateTo: '2020-02-01' }, '');
-    expect(params.get('datetime')).toBe('2020-01-01/2020-02-01');
+    expect(params.has('datetime')).toBe(false);
+  });
+
+  it('clears a stale datetime range from currentSearch when nothing is selected', () => {
+    const params = buildParams(defaultState, '?datetime=2020-01-01%2F2020-02-01');
+    expect(params.has('datetime')).toBe(false);
+  });
+
+  it('drops a stale legacy selected_datetime param it finds in currentSearch', () => {
+    const params = buildParams(defaultState, '?selected_datetime=2020-01-01');
+    expect(params.has('selected_datetime')).toBe(false);
   });
 
   it('writes flat visualise params only where they deviate, dash-joined for bands/indexBands', () => {

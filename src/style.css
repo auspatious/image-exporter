@@ -333,6 +333,23 @@ button:disabled {
   color: var(--text);
 }
 
+.reset-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-family: var(--heading);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.reset-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
 .redraw-btn {
   flex: 0 0 auto;
   background: var(--accent);
