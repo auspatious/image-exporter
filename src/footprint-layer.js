@@ -29,12 +29,17 @@ export function addFootprintLayers(map) {
     },
   });
 
+  // Selected day: every scene found for that day is shown, not just ones
+  // intersecting the drawn box — `_intersects` (set in main.js) picks
+  // between a bold "used in the mosaic" gold and a plain "found nearby but
+  // not used" blue, matching the ordinary all-items colour above.
+  const intersectsColor = ['case', ['get', '_intersects'], '#fbc27b', '#3474c7'];
   map.addLayer({
     id: 'stac-selected-fill',
     type: 'fill',
     source: 'stac-selected',
     paint: {
-      'fill-color': '#fbc27b',
+      'fill-color': intersectsColor,
       'fill-opacity': 0.15,
     },
   });
@@ -43,8 +48,8 @@ export function addFootprintLayers(map) {
     type: 'line',
     source: 'stac-selected',
     paint: {
-      'line-color': '#fbc27b',
-      'line-width': 3,
+      'line-color': intersectsColor,
+      'line-width': ['case', ['get', '_intersects'], 3, 1],
     },
   });
 

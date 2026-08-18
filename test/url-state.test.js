@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseParams, buildParams } from '../src/url-state.js';
+import { DEFAULT_STATE, defaultDateRange } from '../src/state.js';
 
 describe('parseParams', () => {
   it('returns {} for an empty query string', () => {
@@ -7,12 +8,12 @@ describe('parseParams', () => {
   });
 
   it('parses bbox as four numbers', () => {
-    expect(parseParams('?bbox=1,2,3,4').bbox).toEqual([1, 2, 3, 4]);
+    expect(parseParams('?bbox=1_2_3_4').bbox).toEqual([1, 2, 3, 4]);
   });
 
   it('ignores a malformed bbox (wrong length or non-numeric)', () => {
-    expect(parseParams('?bbox=1,2,3').bbox).toBeUndefined();
-    expect(parseParams('?bbox=a,b,c,d').bbox).toBeUndefined();
+    expect(parseParams('?bbox=1_2_3').bbox).toBeUndefined();
+    expect(parseParams('?bbox=a_b_c_d').bbox).toBeUndefined();
   });
 
   it('splits datetime into dateFrom/dateTo', () => {
@@ -35,80 +36,153 @@ describe('parseParams', () => {
     expect(parseParams('?basemap=satellite').basemap).toBe('satellite');
   });
 
-  it('parses visualise_settings JSON', () => {
+  it('parses flat visualise params into a visualiseSettings object', () => {
+    const out = parseParams('?preset=ndvi&viz_mode=index&index_bands=nir-red&vmin=-1&vmax=1&colormap=rdylgn&colormap_reversed=1');
+    expect(out.visualiseSettings).toEqual({
+      preset: 'ndvi',
+      vizMode: 'index',
+      indexBands: { a: 'nir', b: 'red' },
+      viz: { vmin: -1, vmax: 1, colormap: 'rdylgn', colormapReversed: true },
+    });
+  });
+
+  it('parses bands as a dash-joined triple', () => {
+    expect(parseParams('?bands=red-green-blue').visualiseSettings).toEqual({
+      bands: { r: 'red', g: 'green', b: 'blue' },
+    });
+  });
+
+  it('falls back to a legacy visualise_settings JSON blob when no flat params are present', () => {
     const settings = { vizMode: 'index', indexBands: { a: 'nir', b: 'red' } };
     const out = parseParams(`?visualise_settings=${encodeURIComponent(JSON.stringify(settings))}`);
     expect(out.visualiseSettings).toEqual(settings);
   });
 
-  it('ignores malformed visualise_settings JSON instead of throwing', () => {
+  it('ignores malformed legacy visualise_settings JSON instead of throwing', () => {
     expect(() => parseParams('?visualise_settings=not-json')).not.toThrow();
     expect(parseParams('?visualise_settings=not-json').visualiseSettings).toBeUndefined();
+  });
+
+  it('prefers flat params over a legacy blob when both are present', () => {
+    const legacy = { preset: 'from-legacy' };
+    const out = parseParams(`?preset=from-flat&visualise_settings=${encodeURIComponent(JSON.stringify(legacy))}`);
+    expect(out.visualiseSettings).toEqual({ preset: 'from-flat' });
   });
 });
 
 describe('buildParams', () => {
-  const baseState = {
-    drawnBbox: [1, 2, 3, 4],
-    dateFrom: '2026-01-01',
-    dateTo: '2026-02-01',
-    cloudCoverMax: 50,
-    selectedDay: '2026-01-15',
-    targetWidth: 1000,
-    preset: 'ndvi',
-    vizMode: 'index',
-    bands: { r: 'red', g: 'green', b: 'blue' },
-    singleBand: 'nir',
-    indexBands: { a: 'nir', b: 'red' },
-    viz: { vmin: -1, vmax: 1, gamma: 1, colormap: 'rdylgn', colormapReversed: false, format: 'png' },
-    basemap: 'satellite',
+  const defaultRange = defaultDateRange();
+  const defaultState = {
+    ...defaultRange,
+    drawnBbox: null,
+    selectedDay: null,
+    cloudCoverMax: DEFAULT_STATE.cloudCoverMax,
+    targetWidth: DEFAULT_STATE.targetWidth,
+    basemap: DEFAULT_STATE.basemap,
+    preset: DEFAULT_STATE.preset,
+    vizMode: DEFAULT_STATE.vizMode,
+    bands: { ...DEFAULT_STATE.bands },
+    singleBand: DEFAULT_STATE.singleBand,
+    indexBands: { ...DEFAULT_STATE.indexBands },
+    viz: { ...DEFAULT_STATE.viz },
   };
 
-  it('serializes bbox, datetime, cloud_cover_max, selected_datetime, width, basemap', () => {
-    const params = buildParams(baseState, '');
-    expect(params.get('bbox')).toBe('1,2,3,4');
-    expect(params.get('datetime')).toBe('2026-01-01/2026-02-01');
-    expect(params.get('cloud_cover_max')).toBe('50');
-    expect(params.get('selected_datetime')).toBe('2026-01-15');
-    expect(params.get('width')).toBe('1000');
+  it('produces no params at all for a state that matches every default', () => {
+    const params = buildParams(defaultState, '');
+    expect(params.toString()).toBe('');
+  });
+
+  it('only writes fields that deviate from default', () => {
+    const params = buildParams({ ...defaultState, cloudCoverMax: 25, basemap: 'satellite' }, '');
+    expect(params.get('cloud_cover_max')).toBe('25');
     expect(params.get('basemap')).toBe('satellite');
+    expect(params.has('preset')).toBe(false);
+    expect(params.has('viz_mode')).toBe(false);
+    expect(params.has('bands')).toBe(false);
+  });
+
+  it('rounds bbox to 5 decimal places, underscore-joined, and always writes it when drawn', () => {
+    const params = buildParams({ ...defaultState, drawnBbox: [1.123456789, 2, 3, 4] }, '');
+    expect(params.get('bbox')).toBe('1.12346_2_3_4');
   });
 
   it('omits bbox/selected_datetime when there is no drawn box or selected day', () => {
-    const params = buildParams({ ...baseState, drawnBbox: null, selectedDay: null }, '');
+    const params = buildParams(defaultState, '');
     expect(params.has('bbox')).toBe(false);
     expect(params.has('selected_datetime')).toBe(false);
   });
 
-  it('round-trips visualise_settings as JSON', () => {
-    const params = buildParams(baseState, '');
-    const parsed = JSON.parse(params.get('visualise_settings'));
-    expect(parsed).toEqual({
-      preset: 'ndvi',
+  it('writes selected_datetime whenever a day is selected, deviation or not', () => {
+    const params = buildParams({ ...defaultState, selectedDay: '2026-01-15' }, '');
+    expect(params.get('selected_datetime')).toBe('2026-01-15');
+  });
+
+  it('omits datetime when the range matches the current rolling default', () => {
+    const params = buildParams(defaultState, '');
+    expect(params.has('datetime')).toBe(false);
+  });
+
+  it('writes datetime when the range deviates from default', () => {
+    const params = buildParams({ ...defaultState, dateFrom: '2020-01-01', dateTo: '2020-02-01' }, '');
+    expect(params.get('datetime')).toBe('2020-01-01/2020-02-01');
+  });
+
+  it('writes flat visualise params only where they deviate, dash-joined for bands/indexBands', () => {
+    const params = buildParams({
+      ...defaultState,
       vizMode: 'index',
-      bands: baseState.bands,
-      singleBand: 'nir',
-      indexBands: baseState.indexBands,
-      viz: baseState.viz,
-    });
+      preset: 'ndvi',
+      indexBands: { a: 'swir16', b: 'green' },
+      viz: { ...DEFAULT_STATE.viz, vmin: -1, vmax: 1, colormap: 'rdylgn', colormapReversed: true },
+    }, '');
+    expect(params.get('viz_mode')).toBe('index');
+    expect(params.get('preset')).toBe('ndvi');
+    expect(params.get('index_bands')).toBe('swir16-green');
+    expect(params.get('vmin')).toBe('-1');
+    expect(params.get('vmax')).toBe('1');
+    expect(params.get('colormap')).toBe('rdylgn');
+    expect(params.get('colormap_reversed')).toBe('1');
+    expect(params.has('bands')).toBe(false);
+    expect(params.has('gamma')).toBe(false);
+  });
+
+  it('drops any legacy visualise_settings param it finds in currentSearch', () => {
+    const params = buildParams(defaultState, '?visualise_settings=%7B%22old%22%3Atrue%7D');
+    expect(params.has('visualise_settings')).toBe(false);
   });
 
   it('preserves unrelated existing params', () => {
-    const params = buildParams(baseState, '?utm_source=test');
+    const params = buildParams(defaultState, '?utm_source=test');
     expect(params.get('utm_source')).toBe('test');
-    expect(params.get('bbox')).toBe('1,2,3,4');
   });
 
-  it('round-trips through parseParams', () => {
-    const params = buildParams(baseState, '');
+  it('round-trips a non-default state through parseParams, with no percent-encoded characters', () => {
+    const state = {
+      ...defaultState,
+      drawnBbox: [1.5, 2.5, 3.5, 4.5],
+      selectedDay: '2026-01-15',
+      cloudCoverMax: 25,
+      targetWidth: 800,
+      basemap: 'satellite',
+      preset: 'ndvi',
+      vizMode: 'index',
+      indexBands: { a: 'swir16', b: 'green' },
+      viz: { ...DEFAULT_STATE.viz, vmin: -1, vmax: 1, colormap: 'rdylgn', colormapReversed: true },
+    };
+    const params = buildParams(state, '');
+    expect(params.toString()).not.toMatch(/%[0-9A-Fa-f]{2}/);
+
     const out = parseParams(`?${params.toString()}`);
-    expect(out.bbox).toEqual(baseState.drawnBbox);
-    expect(out.dateFrom).toBe(baseState.dateFrom);
-    expect(out.dateTo).toBe(baseState.dateTo);
-    expect(out.cloudCoverMax).toBe(baseState.cloudCoverMax);
-    expect(out.selectedDatetime).toBe(baseState.selectedDay);
-    expect(out.width).toBe(baseState.targetWidth);
-    expect(out.visualiseSettings.vizMode).toBe('index');
-    expect(out.basemap).toBe('satellite');
+    expect(out.bbox).toEqual(state.drawnBbox);
+    expect(out.selectedDatetime).toBe(state.selectedDay);
+    expect(out.cloudCoverMax).toBe(state.cloudCoverMax);
+    expect(out.width).toBe(state.targetWidth);
+    expect(out.basemap).toBe(state.basemap);
+    expect(out.visualiseSettings).toEqual({
+      preset: 'ndvi',
+      vizMode: 'index',
+      indexBands: { a: 'swir16', b: 'green' },
+      viz: { vmin: -1, vmax: 1, colormap: 'rdylgn', colormapReversed: true },
+    });
   });
 });

@@ -44,14 +44,28 @@ describe('groupByDay', () => {
     expect(group.meanCloud).toBe(20);
   });
 
-  it('drops items that do not intersect the drawn box', () => {
+  it('keeps non-intersecting items in `items`, but only intersecting ones in `renderItems`', () => {
     const items = [
       item({ id: 'inside', day: '2026-01-01', cloud: 10, bbox: [0, 0, 1, 1] }),
       item({ id: 'outside', day: '2026-01-01', cloud: 10, bbox: [10, 10, 11, 11] }),
     ];
     const groups = groupByDay(items, [0, 0, 1, 1]);
     expect(groups).toHaveLength(1);
-    expect(groups[0].items.map((i) => i.id)).toEqual(['inside']);
+    expect(groups[0].items.map((i) => i.id).sort()).toEqual(['inside', 'outside']);
+    expect(groups[0].renderItems.map((i) => i.id)).toEqual(['inside']);
+    expect(groups[0].intersectingIds).toEqual(new Set(['inside']));
+  });
+
+  it('drops a day entirely when a box is drawn and nothing that day intersects it', () => {
+    const items = [item({ id: 'outside', day: '2026-01-01', cloud: 10, bbox: [10, 10, 11, 11] })];
+    expect(groupByDay(items, [0, 0, 1, 1])).toEqual([]);
+  });
+
+  it('has a null intersectingIds and renderItems === items with no drawn box', () => {
+    const items = [item({ id: 'a', day: '2026-01-01', cloud: 10, bbox: [0, 0, 1, 1] })];
+    const [group] = groupByDay(items, null);
+    expect(group.intersectingIds).toBeNull();
+    expect(group.renderItems).toEqual(group.items);
   });
 
   it('reports null coverage with no drawn box, and 100% for a fully covering scene', () => {

@@ -19,16 +19,39 @@ behaviour should update this file in the same commit. No drift!
      Results float over the rest of the panel rather than pushing it down.
 2. **Draw a box**: the user draws a rectangle on the map to define the
    export area. A stray click (zero-size box) cancels instead of drawing.
-3. **Pick a day**: results are grouped by acquisition day. Each day shows:
-   - mean cloud cover (%) across that day's scenes (whole-footprint value)
-   - coverage (%): how much of the drawn box is covered by the union of
-     that day's footprints
-   - a dropdown toggle showing the scene count; expanding it lists each
-     contributing STAC item (id + its own cloud cover %), preserving list
-     scroll position across the toggle. Hovering an item row highlights just
-     that item's footprint on the map (white outline, drawn above the
+3. **Pick a day**: results are grouped by acquisition day (`groupByDay` in
+   `mosaic.js`). A day only appears once a box is drawn if at least one of
+   its scenes intersects the box, but each day shows *every* scene the
+   search found for it — not just the intersecting ones — so you can see
+   what else was captured nearby:
+   - mean cloud cover (%) and coverage (%, how much of the drawn box the
+     union of footprints covers) are both computed from the intersecting
+     scenes only (`renderItems`) — the ones actually used for the mosaic.
+   - a dropdown toggle showing the total scene count (all of them);
+     expanding it lists every contributing STAC item (id + its own cloud
+     cover %), dimmed for ones outside the drawn box, preserving list
+     scroll position across the toggle. Hovering an item row highlights
+     just that item's footprint on the map (white outline, drawn above the
      selected-day highlight); clicking opens the item's canonical STAC JSON
      (its `self` link) in a new tab.
+   - On the map, the selected day's footprints are all shown too, coloured
+     by whether they intersect the box: gold (bold outline) for ones used
+     in the mosaic, blue (thin outline, matching the regular all-items
+     colour) for ones found nearby but not used.
+   - Panning keeps searching in the background (the `moveend` handler) so
+     the day list stays current, but once a day's preview has rendered,
+     panning never redraws — or clears — it out from under the user, even
+     if the search (viewport-scoped) no longer returns anything for the
+     drawn box at all, e.g. after panning away from it. The selection and
+     cache are only ever touched by a deliberate action: picking a
+     different day, redrawing the box, resizing, or changing the look —
+     never a bare search-result update. If the selected day still has
+     scenes but a different set than what's rendered (e.g. panning revealed
+     a new one), its row gets a "Redraw" button (only while nothing's
+     already loading) instead of auto-redrawing; clicking it re-fetches
+     with whatever scenes are currently available. If it has none at all,
+     its row just doesn't appear in the list until a fresh box/search
+     brings it back — the rendered image is unaffected either way.
 4. **Preview**: a mosaicked RGB preview streams from the COGs and is shown
    as an image overlay on the map, georeferenced inside the drawn box.
 5. **Visualise** (one panel, combining band/index selection and look-tuning
@@ -184,14 +207,29 @@ behaviour should update this file in the same commit. No drift!
   `url-state.js` (`parseParams`/`buildParams` — no `location`/`history`
   access there, so they're plain to unit test; `main.js` supplies the
   actual browser globals):
-  - `bbox` — drawn box, `west,south,east,north`.
-  - `datetime` — `<dateFrom>/<dateTo>`, the same ISO interval shape the
-    STAC search itself sends.
-  - `cloud_cover_max`, `selected_datetime` (the selected day), `width`
-    (target output width), `basemap` (which `BASEMAPS` entry).
-  - `visualise_settings` — one JSON blob: `preset`, `vizMode`, `bands`,
-    `singleBand`, `indexBands`, `viz` (vmin/vmax/gamma/colormap/
-    colormapReversed/format).
+  - Only fields that deviate from `DEFAULT_STATE` (`state.js`) are
+    written, and every value sticks to characters
+    (`A-Za-z0-9 - . _`) that `application/x-www-form-urlencoded` never
+    percent-encodes — so a shared URL of default-ish settings stays short
+    and stays plain text instead of turning into `%`-escaped noise.
+  - `bbox` — drawn box, `west_south_east_north` (underscore-joined, 5
+    decimal places ≈ 1m; comma isn't used since it gets percent-encoded).
+    Always written when a box is drawn (no meaningful "default" bbox).
+  - `datetime` — `<dateFrom>/<dateTo>`, only written when it differs from
+    the rolling "last 30 days" default. When absent but `selected_datetime`
+    is present, `main.js` searches just that one day instead of falling
+    back to the rolling default — otherwise a link shared weeks or months
+    ago could silently stop finding the item it was shared for.
+  - `selected_datetime` (the selected day) — always written when a day is
+    selected. `cloud_cover_max`, `width` (target output width), `basemap`
+    (which `BASEMAPS` entry) — written only on deviation from default.
+  - Visualise settings, one flat param per field, written only on
+    deviation: `preset`, `viz_mode`, `bands` (dash-joined `r-g-b`),
+    `single_band`, `index_bands` (dash-joined `a-b`), `vmin`, `vmax`,
+    `gamma`, `format`, `colormap`, `colormap_reversed` (`0`/`1`).
+    Replaces the old single `visualise_settings` JSON blob — `parseParams`
+    still reads that legacy shape too (only when none of the flat params
+    above are present) so links shared before this change keep working.
 - Restored on load (a `bbox` also redraws the box outline via
   `draw.setBbox()`, reusing the exact same `onDrawnBbox` path a real
   drag/click takes — no separate restore logic to keep in sync; `basemap`

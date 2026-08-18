@@ -31,10 +31,26 @@ const urlState = parseParams(location.search);
   const patch = {};
   if (urlState.dateFrom) patch.dateFrom = urlState.dateFrom;
   if (urlState.dateTo) patch.dateTo = urlState.dateTo;
+  // No explicit range in the URL, but a specific day was shared — search
+  // just that day rather than the rolling 30-day default, which may no
+  // longer include it by the time this link is opened.
+  if (!urlState.dateFrom && !urlState.dateTo && urlState.selectedDatetime) {
+    patch.dateFrom = urlState.selectedDatetime;
+    patch.dateTo = urlState.selectedDatetime;
+  }
   if (urlState.cloudCoverMax !== undefined) patch.cloudCoverMax = urlState.cloudCoverMax;
   if (urlState.width !== undefined) patch.targetWidth = urlState.width;
   if (urlState.basemap && BASEMAPS.some((b) => b.id === urlState.basemap)) patch.basemap = urlState.basemap;
-  if (urlState.visualiseSettings) Object.assign(patch, urlState.visualiseSettings);
+  if (urlState.visualiseSettings) {
+    // `viz` from the URL is only ever a partial object (each field is
+    // written independently, only on deviation from default — see
+    // url-state.js) — merge it onto the current default `viz`, don't
+    // replace it outright, or the fields it omits become `undefined` and
+    // poison the vmin/vmax stretch maths with NaN.
+    const { viz, ...rest } = urlState.visualiseSettings;
+    Object.assign(patch, rest);
+    if (viz) patch.viz = { ...state.viz, ...viz };
+  }
   if (Object.keys(patch).length) set(patch);
 }
 
@@ -105,7 +121,12 @@ renderAreaPanel(document.getElementById('panel-area'), {
   onDraw: () => { log.info('Click-drag on the map to draw.'); draw.start(); },
   onClear: () => { draw.clear(); log.info('Cleared box.'); },
 });
-renderItemsPanel(document.getElementById('panel-items'), { onSelect: selectDay, map });
+renderItemsPanel(document.getElementById('panel-items'), {
+  onSelect: selectDay,
+  onRedraw: redrawSelectedDay,
+  isRedrawAvailable,
+  map,
+});
 renderVisualisePanel(document.getElementById('panel-visualise'));
 renderExportPanel(document.getElementById('panel-export'), { onDownload: download });
 renderSharePanel(document.getElementById('panel-share'));
@@ -175,11 +196,14 @@ async function runSearch(debounce = false) {
       signal: searchAbort.signal,
     });
     const itemsByDay = groupByDay(items, state.drawnBbox);
-    // If the selected day fell out of the new results (e.g. stricter cloud
-    // filter), drop the selection and its preview.
-    const dayGone = state.selectedDay && !itemsByDay.some((g) => g.day === state.selectedDay);
-    set({ items, itemsByDay, ...(dayGone ? { selectedDay: null } : {}) });
-    if (dayGone) invalidatePreview();
+    // Never auto-clear the selection/preview from a search update — a
+    // search is viewport-scoped, so panning away from the drawn box (or a
+    // stricter cloud filter) can make the selected day vanish from
+    // itemsByDay without the box's actual, already-rendered scenes having
+    // changed at all. If it truly has no scenes left, its row just won't
+    // appear in the list — but the rendered image stays untouched, and
+    // redrawing the box (wherever it now is) recomputes fresh.
+    set({ items, itemsByDay });
     syncFootprints();
     log.ok(`Search: ${items.length} item(s), ${itemsByDay.length} day(s).`);
   } catch (err) {
@@ -188,12 +212,20 @@ async function runSearch(debounce = false) {
 }
 
 /**
- * With a box drawn and a day picked, show only that day's footprints;
- * otherwise show everything from the current search.
+ * With a box drawn and a day picked, show only that day's footprints —
+ * every scene found for that day, not just ones intersecting the box, each
+ * tagged `_intersects` so the layer can colour the two differently.
+ * Otherwise show everything from the current search.
  */
 function syncFootprints() {
   const g = state.selectedDay ? state.itemsByDay.find((x) => x.day === state.selectedDay) : null;
-  setSelected(map, g?.items ?? []);
+  const selected = g
+    ? g.items.map((item) => ({
+      ...item,
+      properties: { ...item.properties, _intersects: !g.intersectingIds || g.intersectingIds.has(item.id) },
+    }))
+    : [];
+  setSelected(map, selected);
   setFootprints(map, g && state.drawnBbox ? [] : state.items);
 }
 
@@ -262,15 +294,27 @@ function bandsSlug() {
   return `rgb-${b.r}-${b.g}-${b.b}`;
 }
 
-function sceneKey() {
+// The "recipe" a redraw is driven by — everything the user deliberately
+// chose (day/box/size/look). Changing any of this always redraws.
+function sceneRecipeKey() {
   if (!state.drawnBbox || !state.selectedDay) return null;
+  const bandsKey = Object.values(activeBands()).join(',');
+  return `${state.selectedDay}|${state.drawnBbox.join(',')}|${state.targetWidth}|${state.vizMode}|${bandsKey}`;
+}
+
+function sceneKey() {
+  const recipe = sceneRecipeKey();
+  if (!recipe) return null;
   const g = state.itemsByDay.find((x) => x.day === state.selectedDay);
   if (!g) return null;
-  // Item ids are part of the key so a cloud-filter change that adds or
-  // removes scenes on the selected day triggers a re-fetch.
-  const ids = g.items.map((i) => i.id).join(';');
-  const bandsKey = Object.values(activeBands()).join(',');
-  return `${state.selectedDay}|${state.drawnBbox.join(',')}|${state.targetWidth}|${state.vizMode}|${bandsKey}|${ids}`;
+  // renderItems (not items — that also holds non-intersecting scenes shown
+  // just for context) are what actually get composited, so their ids are
+  // what should mark the cache stale. Folded in so a search that adds/
+  // removes an intersecting scene (e.g. panning, a cloud-filter change) is
+  // visible here — but that alone doesn't redraw; see the "Redraw" button
+  // wiring below.
+  const ids = g.renderItems.map((i) => i.id).join(';');
+  return `${recipe}|${ids}`;
 }
 
 function invalidatePreview() {
@@ -298,17 +342,17 @@ async function startFetch() {
   if (!group) return;
 
   const size = outputSize(bbox, state.targetWidth, state.nativeGSD);
-  log.info(`Fetching ${group.items.length} item(s) → ${size.width}×${size.height} px`);
+  log.info(`Fetching ${group.renderItems.length} item(s) → ${size.width}×${size.height} px`);
 
   inFlightKey = key;
   fetchAbort?.abort();
   fetchAbort = new AbortController();
-  set({ loading: { active: true, done: 0, total: group.items.length, message: 'Preparing' } });
+  set({ loading: { active: true, done: 0, total: group.renderItems.length, message: 'Preparing' } });
   showSpinner(true);
 
   try {
     await streamComposite({
-      items: group.items,
+      items: group.renderItems,
       drawnBbox: bbox,
       mode: state.vizMode,
       bands: activeBands(),
@@ -383,7 +427,7 @@ async function paintOverlay(img, bbox) {
 /* ── Reactive glue: viz changes → repaint. size changes → refetch. ────── */
 
 let lastViz = JSON.stringify(state.viz);
-let lastSceneKey = sceneKey();
+let lastRecipeKey = sceneRecipeKey();
 let refetchTimer = null;
 subscribe((s) => {
   const viz = JSON.stringify(s.viz);
@@ -391,16 +435,39 @@ subscribe((s) => {
     lastViz = viz;
     if (cache?.key === sceneKey()) schedulePaint();
   }
+
+  // Auto-fetch when either: the recipe deliberately changed (new day/box/
+  // size/look), or nothing is rendered/in-flight for it yet — e.g. a
+  // restored bbox+selected_datetime from a shared URL, whose scenes only
+  // become known once the initial search resolves (recipeKey itself
+  // doesn't change at that point, only itemsByDay does). A search finding
+  // new/removed scenes for an *already-rendered* day (e.g. from panning)
+  // matches neither condition — isRedrawAvailable() below drives a manual
+  // "Redraw" button in the items panel for that case instead.
+  const recipeKey = sceneRecipeKey();
+  const recipeChanged = recipeKey !== lastRecipeKey;
+  lastRecipeKey = recipeKey;
   const key = sceneKey();
-  if (key !== lastSceneKey) {
-    lastSceneKey = key;
-    if (key && cache?.key !== key && inFlightKey !== key) {
-      // Debounce so dragging the size slider doesn't spawn many fetches.
-      clearTimeout(refetchTimer);
-      refetchTimer = setTimeout(startFetch, 300);
-    }
+  if (key && cache?.key !== key && inFlightKey !== key && (recipeChanged || !cache)) {
+    // Debounce so dragging the size slider doesn't spawn many fetches.
+    clearTimeout(refetchTimer);
+    refetchTimer = setTimeout(startFetch, 300);
   }
 });
+
+// True once the scenes covering the selected day (post-search) differ from
+// what's actually cached/rendered — e.g. panning revealed another scene.
+// Read at paint time by the items panel (passed in below, not imported —
+// items-panel.js is imported by this file); not stored in state, so
+// nothing here ever calls `set()` from inside a subscriber.
+function isRedrawAvailable() {
+  const key = sceneKey();
+  return !!(cache && key && cache.key !== key);
+}
+
+function redrawSelectedDay() {
+  startFetch();
+}
 
 // Keep the URL shareable — debounced so continuous interactions (slider
 // drags, typing) don't spam the address bar. Replaces history rather than
