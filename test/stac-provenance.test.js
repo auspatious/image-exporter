@@ -1,0 +1,60 @@
+import { describe, it, expect } from 'vitest';
+import { buildStacProvenance } from '../src/stac-provenance.js';
+
+describe('buildStacProvenance', () => {
+  const baseState = {
+    drawnBbox: [150, -35, 151, -34],
+    selectedDay: '2026-02-03',
+    collection: 'sentinel-2-l2a',
+    vizMode: 'rgb',
+    bands: { r: 'red', g: 'green', b: 'blue' },
+    singleBand: 'nir',
+    indexBands: { a: 'nir', b: 'red' },
+    viz: { vmin: 0, vmax: 3000, gamma: 1, colormap: 'gray', colormapReversed: false, format: 'png' },
+  };
+
+  it('builds a STAC item with derived_from links to source scene self URLs', () => {
+    const out = buildStacProvenance({
+      appState: baseState,
+      sourceItems: [
+        { id: 'scene-a', links: [{ rel: 'self', href: 'https://example.com/a.json' }] },
+        { id: 'scene-b', links: [{ rel: 'self', href: 'https://example.com/b.json' }] },
+      ],
+    });
+
+    expect(out.stac_version).toBe('1.0.0');
+    expect(out.stac_extensions).toContain('https://stac-extensions.github.io/processing/v1.1.0/schema.json');
+    expect(out.bbox).toEqual(baseState.drawnBbox);
+    expect(out.properties.datetime).toBe('2026-02-03T00:00:00Z');
+    expect(out.properties['processing:lineage']).toEqual(['scene-a', 'scene-b']);
+    expect(out.links.filter((l) => l.rel === 'derived_from').map((l) => l.href)).toEqual([
+      'https://example.com/a.json',
+      'https://example.com/b.json',
+    ]);
+  });
+
+  it('records selected bands and stretch settings for index mode', () => {
+    const out = buildStacProvenance({
+      appState: {
+        ...baseState,
+        vizMode: 'index',
+        indexBands: { a: 'swir16', b: 'nir' },
+        viz: { ...baseState.viz, vmin: -1, vmax: 1, colormap: 'rdylgn', colormapReversed: true },
+      },
+      sourceItems: [],
+    });
+
+    expect(out.properties['cogniscient:visualisation'].selected_bands).toEqual({
+      mode: 'index',
+      bands: { a: 'swir16', b: 'nir' },
+      expression: '(a - b) / (a + b)',
+    });
+    expect(out.properties['cogniscient:visualisation'].stretch).toEqual({
+      vmin: -1,
+      vmax: 1,
+      gamma: 1,
+      colormap: 'rdylgn',
+      colormap_reversed: true,
+    });
+  });
+});

@@ -16,6 +16,7 @@ import { renderVisualisePanel } from './ui/visualise-panel.js';
 import { renderExportPanel } from './ui/export-panel.js';
 import { renderSharePanel } from './ui/share-panel.js';
 import { renderStatusPanel } from './ui/status-panel.js';
+import { buildStacProvenance } from './stac-provenance.js';
 import { log } from './log.js';
 import { parseParams, buildParams } from './url-state.js';
 
@@ -128,7 +129,7 @@ renderItemsPanel(document.getElementById('panel-items'), {
   map,
 });
 renderVisualisePanel(document.getElementById('panel-visualise'));
-renderExportPanel(document.getElementById('panel-export'), { onDownload: download });
+renderExportPanel(document.getElementById('panel-export'), { onDownload: download, onDownloadStac: downloadStac });
 renderSharePanel(document.getElementById('panel-share'));
 
 // 'style.load' fires on *every* style load, including a basemap switch —
@@ -517,6 +518,27 @@ async function download() {
   } catch (err) {
     log.err(`Save failed: ${err.message}`);
   }
+}
+
+function downloadStac() {
+  if (!state.drawnBbox || !state.selectedDay) return log.warn('Select a box and day first.');
+  const group = state.itemsByDay.find((g) => g.day === state.selectedDay);
+  if (!group) return log.warn('No source scenes found for this day.');
+
+  const doc = buildStacProvenance({
+    appState: state,
+    sourceItems: group.renderItems,
+  });
+  const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/geo+json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `cogniscient-${state.selectedDay}-${bandsSlug()}-stac.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  log.ok(`Saved STAC provenance (${group.renderItems.length} source scene(s)).`);
 }
 
 /* ── Spinner over drawn box ───────────────────────────────────────────── */
