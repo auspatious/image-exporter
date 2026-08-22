@@ -1,6 +1,6 @@
 import { state, setViz, subscribe } from '../state.js';
 
-export function renderExportPanel(el, { onDownload }) {
+export function renderExportPanel(el, { onDownload, onDownloadStac }) {
   let lastKey = null;
   subscribe(() => {
     const reason = !state.drawnBbox
@@ -25,10 +25,12 @@ export function renderExportPanel(el, { onDownload }) {
           <option value="tif" ${state.viz.format === 'tif' ? 'selected' : ''}>GeoTIFF</option>
         </select>
         <button id="dl-btn" ${canDl ? '' : 'disabled'} title="${reason || 'Save the current preview'}">Download</button>
+        <button id="dl-stac-btn" ${canDl ? '' : 'disabled'} title="${reason || 'Save a STAC document describing how this export was produced'}">Metadata</button>
       </div>
       <p class="hint">${reason || 'Save the current preview.'}</p>
     `;
     el.querySelector('#fmt').addEventListener('change', (e) => setViz({ format: e.target.value }));
     el.querySelector('#dl-btn').addEventListener('click', onDownload);
+    el.querySelector('#dl-stac-btn').addEventListener('click', onDownloadStac);
   });
 }

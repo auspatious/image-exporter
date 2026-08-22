@@ -129,6 +129,21 @@ behaviour should update this file in the same commit. No drift!
        writer has no tiling/overview support, only flat single-strip TIFFs;
        see the open question in the PR/commit that introduced this if that
        changes.
+   - **Metadata**: a second button next to Download saves a minimal STAC
+     Item (`src/stac-provenance.js`, `buildStacProvenance()`) describing how
+     the export was produced — source-scene lineage (`derived_from` links
+     to each scene's own `self` link, plus `processing:lineage`), the
+     drawn box as `bbox`/`geometry`, the selected day as `datetime`, and
+     the band/index selection + stretch settings actually in effect (the
+     colour map is omitted for `rgb` mode, since it has no effect there).
+     Links include the webapp (`rel: about`) and a URL that reproduces the
+     exact same export (`rel: alternate`, built from `buildParams` — the
+     same shareable-URL machinery as the Share panel). Its one asset uses
+     the STAC-spec role `data` (GeoTIFF) or `visual` (PNG/JPG) depending on
+     the current format, and shares the exact same base filename as the
+     real export (only the extension differs — `.stac-item.json`), via a
+     `buildExportBlob()`/`exportBaseFilename()` path both download
+     functions call so they can never drift apart.
 
 ## Data handling rules
 
