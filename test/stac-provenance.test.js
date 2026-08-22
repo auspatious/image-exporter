@@ -57,4 +57,56 @@ describe('buildStacProvenance', () => {
       colormap_reversed: true,
     });
   });
+
+  it('omits colormap from the stretch in rgb mode, since it has no effect there', () => {
+    const out = buildStacProvenance({ appState: baseState, sourceItems: [] });
+    expect(out.properties['cogniscient:visualisation'].stretch).toEqual({ vmin: 0, vmax: 3000, gamma: 1 });
+  });
+
+  it('always links to the webapp, and to a reproduce URL only when one is given', () => {
+    const withoutReproduce = buildStacProvenance({ appState: baseState, sourceItems: [] });
+    expect(withoutReproduce.links).toContainEqual({
+      rel: 'about', href: 'https://cogniscient.auspatious.com/', title: 'Generated with Cogniscient',
+    });
+    expect(withoutReproduce.links.some((l) => l.rel === 'alternate')).toBe(false);
+
+    const withReproduce = buildStacProvenance({
+      appState: baseState, sourceItems: [], reproduceUrl: 'https://cogniscient.auspatious.com/?bbox=1_2_3_4',
+    });
+    expect(withReproduce.links).toContainEqual({
+      rel: 'alternate', href: 'https://cogniscient.auspatious.com/?bbox=1_2_3_4', title: 'Reproduce this export in Cogniscient',
+    });
+  });
+
+  it('has no assets when no exportFilename is given', () => {
+    expect(buildStacProvenance({ appState: baseState, sourceItems: [] }).assets).toEqual({});
+  });
+
+  it("gives a tif export a 'data' role asset with a geotiff media type", () => {
+    const out = buildStacProvenance({
+      appState: { ...baseState, viz: { ...baseState.viz, format: 'tif' } },
+      sourceItems: [],
+      exportFilename: 'cogniscient-2026-02-03-rgb-red-green-blue-1000px.tif',
+    });
+    expect(out.assets.data).toEqual({
+      href: 'cogniscient-2026-02-03-rgb-red-green-blue-1000px.tif',
+      type: 'image/tiff; application=geotiff',
+      roles: ['data'],
+      title: 'Exported GeoTIFF',
+    });
+  });
+
+  it("gives a png/jpg export a 'visual' role asset with an image media type", () => {
+    const out = buildStacProvenance({
+      appState: baseState, // format: 'png'
+      sourceItems: [],
+      exportFilename: 'cogniscient-2026-02-03-rgb-red-green-blue-1000px.png',
+    });
+    expect(out.assets.visual).toEqual({
+      href: 'cogniscient-2026-02-03-rgb-red-green-blue-1000px.png',
+      type: 'image/png',
+      roles: ['visual'],
+      title: 'Exported image',
+    });
+  });
 });

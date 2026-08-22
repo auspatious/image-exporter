@@ -25,7 +25,7 @@ export function renderExportPanel(el, { onDownload, onDownloadStac }) {
           <option value="tif" ${state.viz.format === 'tif' ? 'selected' : ''}>GeoTIFF</option>
         </select>
         <button id="dl-btn" ${canDl ? '' : 'disabled'} title="${reason || 'Save the current preview'}">Download</button>
-        <button id="dl-stac-btn" ${canDl ? '' : 'disabled'} title="${reason || 'Save a STAC provenance document'}">Download STAC</button>
+        <button id="dl-stac-btn" ${canDl ? '' : 'disabled'} title="${reason || 'Save a STAC document describing how this export was produced'}">Metadata</button>
       </div>
       <p class="hint">${reason || 'Save the current preview.'}</p>
     `;

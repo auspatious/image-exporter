@@ -484,32 +484,43 @@ subscribe(() => {
 
 /* ── Download = save current preview data. No re-fetch. ───────────────── */
 
+function extFor(fmt) {
+  return fmt === 'jpg' ? 'jpg' : fmt === 'tif' ? 'tif' : 'png';
+}
+
+// Encodes the current cache into the format-appropriate blob. Shared by
+// download() and downloadStac() so the metadata's referenced/downloaded
+// filename can exactly match the real export's (same width/place), instead
+// of a guess — TIF carries raw reflectance DN / index values, not the
+// stretched display pixels; no vmin/vmax/gamma/colormap baked in.
+async function buildExportBlob(fmt) {
+  if (fmt === 'tif') {
+    const { blob, width, height } = toGeoTIFFBlob(cache.arrays, state.drawnBbox, state.vizMode);
+    return { blob, outWidth: width, outHeight: height };
+  }
+  const rendered = renderRGBA(cache.arrays, state.viz, state.vizMode);
+  const img = cropToValid(rendered, cache.arrays.mask);
+  const blob = await toBlob(img, fmt);
+  return { blob, outWidth: img.width, outHeight: img.height };
+}
+
+async function exportBaseFilename(outWidth) {
+  const [w, s, e, n] = state.drawnBbox;
+  const place = await placeName((w + e) / 2, (s + n) / 2);
+  const suffix = place ? `-${place}` : '';
+  return `cogniscient-${state.selectedDay}-${bandsSlug()}-${outWidth}px${suffix}`;
+}
+
 async function download() {
   if (!cache) return log.warn('No preview to save.');
   try {
     const fmt = state.viz.format;
-
-    let blob, outWidth, outHeight;
-    if (fmt === 'tif') {
-      // TIF carries raw reflectance DN / index values, not the stretched
-      // display pixels — no vmin/vmax/gamma/colormap baked in.
-      ({ blob, width: outWidth, height: outHeight } = toGeoTIFFBlob(cache.arrays, state.drawnBbox, state.vizMode));
-    } else {
-      const rendered = renderRGBA(cache.arrays, state.viz, state.vizMode);
-      const img = cropToValid(rendered, cache.arrays.mask);
-      blob = await toBlob(img, fmt);
-      outWidth = img.width;
-      outHeight = img.height;
-    }
-
-    const [w, s, e, n] = state.drawnBbox;
-    const place = await placeName((w + e) / 2, (s + n) / 2);
-    const suffix = place ? `-${place}` : '';
-    const ext = fmt === 'jpg' ? 'jpg' : fmt === 'tif' ? 'tif' : 'png';
+    const { blob, outWidth, outHeight } = await buildExportBlob(fmt);
+    const base = await exportBaseFilename(outWidth);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cogniscient-${state.selectedDay}-${bandsSlug()}-${outWidth}px${suffix}.${ext}`;
+    a.download = `${base}.${extFor(fmt)}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -520,25 +531,40 @@ async function download() {
   }
 }
 
-function downloadStac() {
+async function downloadStac() {
   if (!state.drawnBbox || !state.selectedDay) return log.warn('Select a box and day first.');
+  if (!cache) return log.warn('No preview to save — fetch one first.');
   const group = state.itemsByDay.find((g) => g.day === state.selectedDay);
   if (!group) return log.warn('No source scenes found for this day.');
 
-  const doc = buildStacProvenance({
-    appState: state,
-    sourceItems: group.renderItems,
-  });
-  const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/geo+json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `cogniscient-${state.selectedDay}-${bandsSlug()}-stac.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  log.ok(`Saved STAC provenance (${group.renderItems.length} source scene(s)).`);
+  try {
+    const fmt = state.viz.format;
+    // Same encode + base-filename path download() uses, so the metadata's
+    // asset href and its own downloaded filename exactly match the real
+    // exported image/GeoTIFF's — the blob itself is discarded here.
+    const { outWidth } = await buildExportBlob(fmt);
+    const base = await exportBaseFilename(outWidth);
+
+    const reproduceUrl = `${location.origin}${location.pathname}?${buildParams(state, location.search).toString()}${location.hash}`;
+    const doc = buildStacProvenance({
+      appState: state,
+      sourceItems: group.renderItems,
+      reproduceUrl,
+      exportFilename: `${base}.${extFor(fmt)}`,
+    });
+    const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/geo+json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${base}.stac-item.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    log.ok(`Saved metadata (${group.renderItems.length} source scene(s)).`);
+  } catch (err) {
+    log.err(`Metadata save failed: ${err.message}`);
+  }
 }
 
 /* ── Spinner over drawn box ───────────────────────────────────────────── */

@@ -4,6 +4,17 @@
  * https://github.com/radiantearth/stac-spec/blob/master/item-spec/item-spec.md
  */
 
+const APP_URL = 'https://cogniscient.auspatious.com/';
+
+// Per STAC's asset roles best practice — 'data' is the raw analysable
+// asset, 'visual' is a rendered image meant for viewing, not analysis:
+// https://github.com/radiantearth/stac-spec/blob/master/best-practices.md#asset-roles
+function assetForFormat(format) {
+  if (format === 'tif') return { role: 'data', type: 'image/tiff; application=geotiff' };
+  if (format === 'jpg') return { role: 'visual', type: 'image/jpeg' };
+  return { role: 'visual', type: 'image/png' };
+}
+
 function bboxGeometry([w, s, e, n]) {
   return {
     type: 'Polygon',
@@ -27,17 +38,16 @@ function selfHref(item) {
   return item?.links?.find((l) => l.rel === 'self')?.href ?? null;
 }
 
-export function buildStacProvenance({ appState, sourceItems, exportedAsset }) {
+export function buildStacProvenance({ appState, sourceItems, reproduceUrl, exportFilename }) {
   const bbox = appState.drawnBbox;
   const datetime = appState.selectedDay ? `${appState.selectedDay}T00:00:00Z` : null;
   const created = new Date().toISOString();
   const selectedBands = activeBandSelection(appState);
+  const format = appState.viz.format;
+
   const links = [
-    {
-      rel: 'about',
-      href: 'https://stacspec.org/en',
-      title: 'STAC specification',
-    },
+    { rel: 'about', href: APP_URL, title: 'Generated with Cogniscient' },
+    ...(reproduceUrl ? [{ rel: 'alternate', href: reproduceUrl, title: 'Reproduce this export in Cogniscient' }] : []),
     ...sourceItems
       .map((item) => {
         const href = selfHref(item);
@@ -53,15 +63,30 @@ export function buildStacProvenance({ appState, sourceItems, exportedAsset }) {
       .filter(Boolean),
   ];
 
-  const assets = exportedAsset
-    ? {
-      export: {
-        href: exportedAsset.href,
-        type: exportedAsset.type,
-        title: exportedAsset.title,
-        roles: ['data'],
-      },
-    }
+  // rgb mode ignores colormap/colormapReversed entirely (see FEATURES.md) —
+  // don't record settings that had no effect on the export.
+  const stretch = {
+    vmin: appState.viz.vmin,
+    vmax: appState.viz.vmax,
+    gamma: appState.viz.gamma,
+    ...(appState.vizMode === 'rgb' ? {} : {
+      colormap: appState.viz.colormap,
+      colormap_reversed: appState.viz.colormapReversed,
+    }),
+  };
+
+  const assets = exportFilename
+    ? (() => {
+      const { role, type } = assetForFormat(format);
+      return {
+        [role]: {
+          href: exportFilename,
+          type,
+          roles: [role],
+          title: role === 'data' ? 'Exported GeoTIFF' : 'Exported image',
+        },
+      };
+    })()
     : {};
 
   return {
@@ -78,14 +103,8 @@ export function buildStacProvenance({ appState, sourceItems, exportedAsset }) {
       'cogniscient:collection': appState.collection,
       'cogniscient:visualisation': {
         selected_bands: selectedBands,
-        stretch: {
-          vmin: appState.viz.vmin,
-          vmax: appState.viz.vmax,
-          gamma: appState.viz.gamma,
-          colormap: appState.viz.colormap,
-          colormap_reversed: appState.viz.colormapReversed,
-        },
-        format: appState.viz.format,
+        stretch,
+        format,
       },
     },
     links,
