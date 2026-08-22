@@ -99,7 +99,12 @@ export function buildStacProvenance({ appState, sourceItems, reproduceUrl, expor
     properties: {
       datetime,
       created,
-      'processing:lineage': sourceItems.map((item) => item.id),
+      // A free-text description, per the processing extension schema — NOT
+      // an array (item ids are already captured correctly, as structured
+      // data, in the derived_from links above).
+      'processing:lineage': sourceItems.length
+        ? `Composited from ${sourceItems.length} Sentinel-2 scene(s): ${sourceItems.map((item) => item.id).join(', ')}`
+        : 'No source scenes recorded.',
       'cogniscient:collection': appState.collection,
       'cogniscient:visualisation': {
         selected_bands: selectedBands,

@@ -26,11 +26,20 @@ describe('buildStacProvenance', () => {
     expect(out.stac_extensions).toContain('https://stac-extensions.github.io/processing/v1.1.0/schema.json');
     expect(out.bbox).toEqual(baseState.drawnBbox);
     expect(out.properties.datetime).toBe('2026-02-03T00:00:00Z');
-    expect(out.properties['processing:lineage']).toEqual(['scene-a', 'scene-b']);
+    // A string per the processing extension schema, not an array — a
+    // viewer expecting a string silently shows nothing for the wrong type.
+    expect(typeof out.properties['processing:lineage']).toBe('string');
+    expect(out.properties['processing:lineage']).toContain('scene-a');
+    expect(out.properties['processing:lineage']).toContain('scene-b');
     expect(out.links.filter((l) => l.rel === 'derived_from').map((l) => l.href)).toEqual([
       'https://example.com/a.json',
       'https://example.com/b.json',
     ]);
+  });
+
+  it('still writes a string processing:lineage when there are no source items', () => {
+    const out = buildStacProvenance({ appState: baseState, sourceItems: [] });
+    expect(out.properties['processing:lineage']).toBe('No source scenes recorded.');
   });
 
   it('records selected bands and stretch settings for index mode', () => {
